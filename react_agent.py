@@ -46,7 +46,7 @@ def scrape_url(url: str) -> str:
     """
     try:
         response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         })
         response.raise_for_status()
         
@@ -74,6 +74,10 @@ class ReActAgent:
     """
     A simple ReAct (Reasoning + Acting) agent that can use tools to answer questions.
     """
+    
+    # Constants
+    MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
+    API_TIMEOUT = 30  # Timeout for API calls in seconds
     
     def __init__(self, api_key: str, model: str = "tngtech/deepseek-r1t2-chimera:free"):
         """
@@ -171,7 +175,7 @@ Question: {question}
         }
         
         try:
-            response = requests.post(self.api_url, headers=headers, json=data, timeout=60)
+            response = requests.post(self.api_url, headers=headers, json=data, timeout=self.API_TIMEOUT)
             response.raise_for_status()
             result = response.json()
             return result["choices"][0]["message"]["content"]
@@ -251,8 +255,8 @@ Question: {question}
             elif action == "scrape_url":
                 result = tool_function(action_input)
                 # Limit result length to avoid overwhelming the context
-                if len(result) > 4000:
-                    result = result[:4000] + "\n\n[Content truncated...]"
+                if len(result) > self.MAX_CONTENT_LENGTH:
+                    result = result[:self.MAX_CONTENT_LENGTH] + "\n\n[Content truncated...]"
                 return result
             else:
                 return str(tool_function(action_input))
