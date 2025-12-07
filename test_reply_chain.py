@@ -52,9 +52,11 @@ async def test_reply_chain_context():
         chain = []
         current_msg = message
         bot_id = 12345  # Test bot ID
+        max_chain_depth = 10  # Match production limit
+        depth = 0
         
         # Follow the reply chain backwards
-        while current_msg.reference:
+        while current_msg.reference and depth < max_chain_depth:
             try:
                 ref_msg = current_msg.referenced_message
                 if not ref_msg:
@@ -74,7 +76,9 @@ async def test_reply_chain_context():
                 
                 # Move to the next message in the chain
                 current_msg = ref_msg
-            except Exception:
+                depth += 1
+            except (AttributeError, KeyError):
+                # Mock object exceptions - in production this would be Discord exceptions
                 break
         
         # Reverse to get chronological order (oldest first)

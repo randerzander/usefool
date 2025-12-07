@@ -53,9 +53,11 @@ class ReActDiscordBot:
             """
             chain = []
             current_msg = message
+            max_chain_depth = 10  # Limit chain depth to prevent performance issues
+            depth = 0
             
             # Follow the reply chain backwards
-            while current_msg.reference:
+            while current_msg.reference and depth < max_chain_depth:
                 try:
                     # Get the referenced message (may need to fetch if not cached)
                     ref_msg = current_msg.referenced_message
@@ -80,6 +82,7 @@ class ReActDiscordBot:
                     
                     # Move to the next message in the chain
                     current_msg = ref_msg
+                    depth += 1
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     # If we can't fetch the message, stop here
                     break
