@@ -56,8 +56,8 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
-                # Send a "thinking" message
-                thinking_msg = await message.channel.send("🤔 Let me think about that...")
+                # Add a thinking emoji reaction to the original message
+                await message.add_reaction("🤔")
                 
                 try:
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
@@ -65,6 +65,9 @@ class ReActDiscordBot:
                     answer = await asyncio.to_thread(
                         self.agent.run, question, max_iterations=5, verbose=False
                     )
+                    
+                    # Remove the thinking emoji reaction
+                    await message.remove_reaction("🤔", self.client.user)
                     
                     # Discord has a 2000 character limit for messages
                     if len(answer) > 1900:
@@ -80,17 +83,18 @@ class ReActDiscordBot:
                         if answer:  # Add remaining text
                             chunks.append(answer)
                         
-                        await thinking_msg.delete()
                         for i, chunk in enumerate(chunks):
                             if i == 0:
                                 await message.channel.send(f"**Answer:**\n{chunk}")
                             else:
                                 await message.channel.send(chunk)
                     else:
-                        await thinking_msg.edit(content=f"**Answer:**\n{answer}")
+                        await message.channel.send(f"**Answer:**\n{answer}")
                 
                 except Exception as e:
-                    await thinking_msg.edit(content=f"❌ Error: {str(e)}")
+                    # Remove the thinking emoji reaction if there was an error
+                    await message.remove_reaction("🤔", self.client.user)
+                    await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
     
     def run(self):
