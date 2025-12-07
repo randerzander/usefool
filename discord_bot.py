@@ -138,6 +138,42 @@ User question: {question}"""
                     await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
     
+    def _call_llm(self, prompt: str, timeout: int = 10) -> str:
+        """
+        Helper method to call the LLM API.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            timeout: Request timeout in seconds
+            
+        Returns:
+            The LLM's response content
+            
+        Raises:
+            Exception: If the API call fails
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": "tngtech/deepseek-r1t2-chimera:free",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=timeout
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
+    
     def _detect_intent(self, message: str) -> dict:
         """
         Detect the intent of a user message (sarcastic vs serious).
@@ -156,28 +192,8 @@ Message: "{message}"
 
 JSON Response:"""
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        data = {
-            "model": "tngtech/deepseek-r1t2-chimera:free",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
-        }
-        
         try:
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=data,
-                timeout=10
-            )
-            response.raise_for_status()
-            result = response.json()
-            content = result["choices"][0]["message"]["content"].strip()
+            content = self._call_llm(prompt)
             
             # Extract JSON from response (handle cases with markdown code blocks)
             if "```json" in content:
@@ -211,29 +227,8 @@ JSON Response:"""
 
 TL;DR:"""
             
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            data = {
-                "model": "tngtech/deepseek-r1t2-chimera:free",
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            }
-            
             try:
-                llm_response = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=data,
-                    timeout=10
-                )
-                llm_response.raise_for_status()
-                result = llm_response.json()
-                tldr = result["choices"][0]["message"]["content"].strip()
-                
+                tldr = self._call_llm(prompt)
                 # Format the response with TL;DR
                 return f"**TL;DR:** {tldr}\n\n---\n\n{response}"
             except Exception as e:

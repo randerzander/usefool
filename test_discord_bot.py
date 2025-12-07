@@ -104,19 +104,14 @@ def test_intent_detection():
     
     with patch('discord_bot.discord.Client') as MockClient, \
          patch('discord_bot.ReActAgent') as MockAgent, \
-         patch('discord_bot.requests.post') as mock_post:
+         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
         bot = ReActDiscordBot("test_token", "test_api_key")
         
         # Test case 1: Serious message
         print("\nTest 1: Serious message")
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": '{"is_sarcastic": false, "confidence": "high"}'}}]
-        }
-        mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
+        mock_call_llm.return_value = '{"is_sarcastic": false, "confidence": "high"}'
         
         result = bot._detect_intent("What is the weather like today?")
         print(f"Input: 'What is the weather like today?'")
@@ -126,10 +121,7 @@ def test_intent_detection():
         
         # Test case 2: Sarcastic message
         print("\nTest 2: Sarcastic message")
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": '{"is_sarcastic": true, "confidence": "high"}'}}]
-        }
-        mock_post.return_value = mock_response
+        mock_call_llm.return_value = '{"is_sarcastic": true, "confidence": "high"}'
         
         result = bot._detect_intent("Oh great, another rainy day, just what I needed!")
         print(f"Input: 'Oh great, another rainy day, just what I needed!'")
@@ -139,10 +131,7 @@ def test_intent_detection():
         
         # Test case 3: Handling JSON in markdown code blocks
         print("\nTest 3: Handling JSON in markdown code blocks")
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": '```json\n{"is_sarcastic": false, "confidence": "medium"}\n```'}}]
-        }
-        mock_post.return_value = mock_response
+        mock_call_llm.return_value = '```json\n{"is_sarcastic": false, "confidence": "medium"}\n```'
         
         result = bot._detect_intent("How do I fix this error?")
         print(f"Input: 'How do I fix this error?'")
@@ -153,7 +142,7 @@ def test_intent_detection():
         
         # Test case 4: Error handling
         print("\nTest 4: Error handling")
-        mock_post.side_effect = Exception("API error")
+        mock_call_llm.side_effect = Exception("API error")
         
         result = bot._detect_intent("Test message")
         print(f"Input: 'Test message' (with API error)")
@@ -176,7 +165,7 @@ def test_tldr_addition():
     
     with patch('discord_bot.discord.Client') as MockClient, \
          patch('discord_bot.ReActAgent') as MockAgent, \
-         patch('discord_bot.requests.post') as mock_post:
+         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
         bot = ReActDiscordBot("test_token", "test_api_key")
@@ -193,12 +182,7 @@ def test_tldr_addition():
         print("\nTest 2: Long response")
         long_response = "This is a much longer response that contains a lot of information. " * 10
         
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "A concise summary of the long response."}}]
-        }
-        mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
+        mock_call_llm.return_value = "A concise summary of the long response."
         
         result = bot._add_tldr_to_response(long_response)
         print(f"Input length: {len(long_response)} characters")
@@ -210,7 +194,7 @@ def test_tldr_addition():
         
         # Test case 3: Error handling
         print("\nTest 3: Error handling for TL;DR generation")
-        mock_post.side_effect = Exception("API error")
+        mock_call_llm.side_effect = Exception("API error")
         
         result = bot._add_tldr_to_response(long_response)
         print(f"Input length: {len(long_response)} characters (with API error)")
