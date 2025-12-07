@@ -40,6 +40,60 @@ class ReActDiscordBot:
             print(f"Bot is ready to answer questions!")
             print(f"Invite link: https://discord.com/api/oauth2/authorize?client_id={self.client.user.id}&permissions=2048&scope=bot")
         
+        async def get_reply_chain(message) -> str:
+            """
+            Get the full reply chain context for a message.
+            Follows the chain of replied-to messages up to the root.
+            
+            Args:
+                message: The Discord message to get reply chain for
+                
+            Returns:
+                A formatted string with the reply chain context, or empty string if no replies
+            """
+            chain = []
+            current_msg = message
+            max_chain_depth = 10  # Limit chain depth to prevent performance issues
+            depth = 0
+            
+            # Follow the reply chain backwards
+            while current_msg.reference and depth < max_chain_depth:
+                try:
+                    # Get the referenced message (may need to fetch if not cached)
+                    ref_msg = current_msg.referenced_message
+                    if not ref_msg and current_msg.reference.message_id:
+                        # Fetch the message if it's not in cache
+                        ref_msg = await current_msg.channel.fetch_message(current_msg.reference.message_id)
+                    
+                    if not ref_msg:
+                        break
+                    
+                    # Format the message content
+                    author_name = ref_msg.author.display_name
+                    content = ref_msg.content
+                    
+                    # Remove bot mentions from content for clarity
+                    content = content.replace(f"<@{self.client.user.id}>", "").strip()
+                    content = content.replace(f"<@!{self.client.user.id}>", "").strip()
+                    
+                    # Add to chain (we're building it backwards, will reverse later)
+                    if content:
+                        chain.append(f"{author_name}: {content}")
+                    
+                    # Move to the next message in the chain
+                    current_msg = ref_msg
+                    depth += 1
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    # If we can't fetch the message, stop here
+                    break
+            
+            # Reverse to get chronological order (oldest first)
+            chain.reverse()
+            
+            if chain:
+                return "Previous conversation context:\n" + "\n".join(chain) + "\n\n"
+            return ""
+        
         @self.client.event
         async def on_message(message):
             # Don't respond to the bot's own messages
@@ -57,9 +111,12 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
+                # Get reply chain context if this is a reply
+                reply_context = await get_reply_chain(message)
+                
                 # Add current datetime to the query so the bot can consider current time
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                question_with_time = f"[Current date and time: {current_time}] {question}"
+                question_with_time = f"[Current date and time: {current_time}] {reply_context}{question}"
                 
                 # Add a thinking emoji reaction to the original message
                 try:
