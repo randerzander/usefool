@@ -18,9 +18,27 @@ cd scraper
 ```
 
 2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+
+   **Option A: Using uv (recommended - faster installation)**
+   ```bash
+   # Install uv if not already installed
+   pip install uv
+   
+   # Create a virtual environment named "scraper"
+   uv venv scraper
+   
+   # Activate the virtual environment
+   source scraper/bin/activate  # On macOS/Linux
+   # Or on Windows: scraper\Scripts\activate
+   
+   # Install dependencies with uv
+   uv pip install -r requirements.txt
+   ```
+
+   **Option B: Using pip (traditional method)**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 3. Set up your OpenRouter API key:
 ```bash
@@ -71,6 +89,20 @@ python test_react_agent.py
 
 This will test the agent's parsing logic, tool execution, and reasoning loop without requiring API access.
 
+### Testing uv Virtual Environment Setup
+
+To verify that the uv virtual environment setup works correctly:
+```bash
+python test_uv_venv.py
+```
+
+This test script will:
+1. Verify uv is installed
+2. Create a virtual environment named "scraper"
+3. Install dependencies using uv pip
+4. Run the test suite in the virtual environment
+5. Clean up the test environment
+
 ## How It Works
 
 The ReAct agent follows a thought-action-observation loop:
@@ -112,6 +144,7 @@ Final Answer: [Comprehensive answer based on search results]
 - `react_agent.py` - Main implementation of the ReAct agent
 - `example.py` - Example usage with multiple scenarios
 - `test_react_agent.py` - Test suite for the agent
+- `test_uv_venv.py` - Test script for uv virtual environment setup
 - `requirements.txt` - Python dependencies
 - `.env.example` - Example environment configuration
 - `README.md` - This file
