@@ -46,11 +46,10 @@ class ReActDiscordBot:
             
             # Only respond to messages that mention the bot
             if self.client.user.mentioned_in(message):
-                # Extract the question by removing the bot mention
+                # Extract the question by removing only the bot's mention
                 question = message.content
-                for mention in message.mentions:
-                    question = question.replace(f"<@{mention.id}>", "").strip()
-                    question = question.replace(f"<@!{mention.id}>", "").strip()
+                question = question.replace(f"<@{self.client.user.id}>", "").strip()
+                question = question.replace(f"<@!{self.client.user.id}>", "").strip()
                 
                 if not question:
                     await message.channel.send("Please ask me a question after mentioning me!")
@@ -60,13 +59,23 @@ class ReActDiscordBot:
                 thinking_msg = await message.channel.send("🤔 Let me think about that...")
                 
                 try:
-                    # Use the ReAct agent to answer the question
-                    answer = self.agent.run(question, max_iterations=5, verbose=True)
+                    # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
+                    answer = self.agent.run(question, max_iterations=5, verbose=False)
                     
                     # Discord has a 2000 character limit for messages
                     if len(answer) > 1900:
-                        # Split the answer into multiple messages
-                        chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
+                        # Split the answer into multiple messages at word boundaries
+                        chunks = []
+                        while len(answer) > 1900:
+                            # Find the last space before the 1900 character limit
+                            split_pos = answer.rfind(' ', 0, 1900)
+                            if split_pos == -1:  # No space found, split at limit
+                                split_pos = 1900
+                            chunks.append(answer[:split_pos])
+                            answer = answer[split_pos:].strip()
+                        if answer:  # Add remaining text
+                            chunks.append(answer)
+                        
                         await thinking_msg.delete()
                         for i, chunk in enumerate(chunks):
                             if i == 0:
