@@ -57,7 +57,11 @@ class ReActDiscordBot:
                     return
                 
                 # Add a thinking emoji reaction to the original message
-                await message.add_reaction("🤔")
+                try:
+                    await message.add_reaction("🤔")
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    # If we can't add a reaction, continue anyway
+                    pass
                 
                 try:
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
@@ -67,7 +71,11 @@ class ReActDiscordBot:
                     )
                     
                     # Remove the thinking emoji reaction
-                    await message.remove_reaction("🤔", self.client.user)
+                    try:
+                        await message.remove_reaction("🤔", self.client.user)
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        # If we can't remove the reaction, continue anyway
+                        pass
                     
                     # Discord has a 2000 character limit for messages
                     if len(answer) > 1900:
@@ -93,7 +101,11 @@ class ReActDiscordBot:
                 
                 except Exception as e:
                     # Remove the thinking emoji reaction if there was an error
-                    await message.remove_reaction("🤔", self.client.user)
+                    try:
+                        await message.remove_reaction("🤔", self.client.user)
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        # If we can't remove the reaction, continue anyway
+                        pass
                     await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
     
