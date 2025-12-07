@@ -9,6 +9,7 @@ The bot's token should be in a file named 'token.txt' in the current working dir
 import os
 import asyncio
 import discord
+from datetime import datetime
 from react_agent import ReActAgent
 
 
@@ -56,15 +57,30 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
-                # Send a "thinking" message
-                thinking_msg = await message.channel.send("🤔 Let me think about that...")
+                # Add current datetime to the query so the bot can consider current time
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                question_with_time = f"[Current date and time: {current_time}] {question}"
+                
+                # Add a thinking emoji reaction to the original message
+                try:
+                    await message.add_reaction("⏳")
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    # If we can't add a reaction, continue anyway
+                    pass
                 
                 try:
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                     answer = await asyncio.to_thread(
-                        self.agent.run, question, max_iterations=5, verbose=False
+                        self.agent.run, question_with_time, max_iterations=5, verbose=False
                     )
+                    
+                    # Remove the thinking emoji reaction
+                    try:
+                        await message.remove_reaction("⏳", self.client.user)
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        # If we can't remove the reaction, continue anyway
+                        pass
                     
                     # Discord has a 2000 character limit for messages
                     if len(answer) > 1900:
@@ -80,17 +96,22 @@ class ReActDiscordBot:
                         if answer:  # Add remaining text
                             chunks.append(answer)
                         
-                        await thinking_msg.delete()
                         for i, chunk in enumerate(chunks):
                             if i == 0:
                                 await message.channel.send(f"**Answer:**\n{chunk}")
                             else:
                                 await message.channel.send(chunk)
                     else:
-                        await thinking_msg.edit(content=f"**Answer:**\n{answer}")
+                        await message.channel.send(f"**Answer:**\n{answer}")
                 
                 except Exception as e:
-                    await thinking_msg.edit(content=f"❌ Error: {str(e)}")
+                    # Remove the thinking emoji reaction if there was an error
+                    try:
+                        await message.remove_reaction("⏳", self.client.user)
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        # If we can't remove the reaction, continue anyway
+                        pass
+                    await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
     
     def run(self):
