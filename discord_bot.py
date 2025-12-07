@@ -60,7 +60,7 @@ class ReActDiscordBot:
             while current_msg.reference and depth < max_chain_depth:
                 try:
                     # Get the referenced message (may need to fetch if not cached)
-                    ref_msg = current_msg.referenced_message
+                    ref_msg = getattr(current_msg, 'referenced_message', None)
                     if not ref_msg and current_msg.reference.message_id:
                         # Fetch the message if it's not in cache
                         ref_msg = await current_msg.channel.fetch_message(current_msg.reference.message_id)
