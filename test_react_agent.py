@@ -25,6 +25,11 @@ class MockReActAgent(ReActAgent):
                 "function": lambda url: "# Test Article\n\nThis is test content from the URL.",
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
+            },
+            "write_code": {
+                "function": lambda prompt: "```python\nprint('Hello, World!')\n```",
+                "description": "Write code based on a prompt using an AI code generation model. Input should be a detailed description of the code to write.",
+                "parameters": ["prompt"]
             }
         }
         self.test_responses = []
@@ -107,6 +112,13 @@ def test_tool_execution():
     assert "Error" in result
     print("✓ Test 5 passed")
     
+    # Test code writing tool
+    result = agent._execute_action("write_code", "Write a hello world program")
+    print("\nTest 6 - Execute code writing tool:")
+    print(f"Result: {result[:100]}...")
+    assert "print" in result or "Hello" in result
+    print("✓ Test 6 passed")
+    
     print("\n✓ All tool execution tests passed!")
 
 
@@ -127,10 +139,10 @@ Final Answer: Here is the answer based on the search results."""
     ])
     
     result = agent.run("What is a test?", max_iterations=3, verbose=False)
-    print("\nTest 6 - Full agent loop:")
+    print("\nTest 7 - Full agent loop:")
     print(f"Result: {result}")
     assert "answer based on the search results" in result
-    print("✓ Test 6 passed")
+    print("✓ Test 7 passed")
     
     print("\n✓ All agent loop tests passed!")
 

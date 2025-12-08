@@ -12,3 +12,4 @@ build/
 scraper/
 token.txt
 =*
+generated_code_*/

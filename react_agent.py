@@ -8,6 +8,7 @@ import os
 import json
 import re
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from duckduckgo_search import DDGS
 from pyreadability import Readability
 import html2text
@@ -69,6 +70,122 @@ def scrape_url(url: str) -> str:
         return f"Error scraping URL: {str(e)}"
 
 
+def write_code(prompt: str, api_key: str, model: str = "kwaipilot/kat-coder-pro:free") -> str:
+    """
+    Write code using an AI code generation model.
+    If the response contains multiple files, saves them to a local directory.
+    
+    Args:
+        prompt: The code writing prompt
+        api_key: OpenRouter API key
+        model: Model to use for code generation (default: kwaipilot/kat-coder-pro:free)
+        
+    Returns:
+        The generated code or a message indicating where the code was saved
+    """
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=60  # Code generation may take longer
+        )
+        response.raise_for_status()
+        result = response.json()
+        code_response = result["choices"][0]["message"]["content"]
+        
+        # Parse the response to check for multiple files
+        # Look for file markers like "filename.ext:" or "```language filename.ext"
+        files = _parse_code_files(code_response)
+        
+        if len(files) > 1:
+            # Multiple files found - save to a directory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dir_name = f"generated_code_{timestamp}"
+            os.makedirs(dir_name, exist_ok=True)
+            
+            for filename, content in files.items():
+                filepath = os.path.join(dir_name, filename)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            
+            file_list = "\n".join([f"  - {name}" for name in files.keys()])
+            return f"Code saved to directory '{dir_name}' with the following files:\n{file_list}\n\nTotal files: {len(files)}"
+        else:
+            # Single file or no clear file structure - return the code directly
+            return code_response
+            
+    except Exception as e:
+        return f"Error writing code: {str(e)}"
+
+
+def _parse_code_files(response: str) -> Dict[str, str]:
+    """
+    Parse code response to extract multiple files.
+    
+    Looks for patterns like:
+    - ```language filename.ext
+    - # filename.ext
+    - // filename.ext
+    - filename.ext:
+    
+    Args:
+        response: The code response from the LLM
+        
+    Returns:
+        Dictionary mapping filenames to their content
+    """
+    files = {}
+    
+    # Pattern 1: Code blocks with filename in the marker (```python main.py)
+    pattern1 = r'```(?:\w+\s+)?([^\s`]+\.\w+)\s*\n(.*?)```'
+    matches = re.finditer(pattern1, response, re.DOTALL)
+    for match in matches:
+        filename = match.group(1).strip()
+        content = match.group(2).strip()
+        files[filename] = content
+    
+    # Pattern 2: Filename as header followed by code block (# main.py\n```python)
+    pattern2 = r'(?:#+\s+|//\s+|/\*\s+)?([^\s]+\.\w+)\s*:?\s*\n```(?:\w+)?\n(.*?)```'
+    matches = re.finditer(pattern2, response, re.DOTALL)
+    for match in matches:
+        filename = match.group(1).strip()
+        content = match.group(2).strip()
+        if filename not in files:  # Don't override pattern1 matches
+            files[filename] = content
+    
+    # Pattern 3: Standalone filename followed by content (filename.ext:\n<content>)
+    # Matches: "filename.ext:" followed by lines that aren't code blocks or other filenames
+    # (?:(?!```|^\w+\.\w+:).*\n?)+ means: match lines that don't start with ``` or filename patterns
+    pattern3 = r'\n([^\s]+\.\w+)\s*:\s*\n((?:(?!```|^\w+\.\w+:).*\n?)+)'
+    matches = re.finditer(pattern3, response, re.MULTILINE)
+    for match in matches:
+        filename = match.group(1).strip()
+        content = match.group(2).strip()
+        if filename not in files:
+            files[filename] = content
+    
+    # If no files found with patterns, check if there's a single code block
+    if not files:
+        single_block = re.search(r'```(?:\w+)?\n(.*?)```', response, re.DOTALL)
+        if single_block:
+            files['code.txt'] = single_block.group(1).strip()
+    
+    return files
+
+
 # ReAct Agent implementation
 class ReActAgent:
     """
@@ -79,16 +196,18 @@ class ReActAgent:
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
     API_TIMEOUT = 30  # Timeout for API calls in seconds
     
-    def __init__(self, api_key: str, model: str = "tngtech/deepseek-r1t2-chimera:free"):
+    def __init__(self, api_key: str, model: str = "tngtech/deepseek-r1t2-chimera:free", code_model: str = "kwaipilot/kat-coder-pro:free"):
         """
         Initialize the ReAct agent.
         
         Args:
             api_key: OpenRouter API key
             model: Model to use for reasoning
+            code_model: Model to use for code generation (default: kwaipilot/kat-coder-pro:free)
         """
         self.api_key = api_key
         self.model = model
+        self.code_model = code_model
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
         
         # Define available tools
@@ -102,6 +221,11 @@ class ReActAgent:
                 "function": scrape_url,
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
+            },
+            "write_code": {
+                "function": lambda prompt: write_code(prompt, self.api_key, self.code_model),
+                "description": "Write code based on a prompt using an AI code generation model. Input should be a detailed description of the code to write. If multiple files are generated, they will be saved to a local directory.",
+                "parameters": ["prompt"]
             }
         }
     
@@ -128,7 +252,7 @@ Available tools:
 
 Answer the following question by using the ReAct format:
 Thought: [Your reasoning about what to do next]
-Action: [Tool name to use: duckduckgo_search or scrape_url]
+Action: [Tool name to use: duckduckgo_search, scrape_url, or write_code]
 Action Input: [Input for the tool]
 
 After receiving an observation, you can either:
