@@ -1,13 +1,14 @@
 # scraper
 
-A simple ReAct (Reasoning + Acting) agent that can search the web and scrape URLs to answer questions.
+A simple ReAct (Reasoning + Acting) agent that can search the web, scrape URLs, and write code to answer questions.
 
 ## Features
 
 - **ReAct Agent**: Uses the ReAct pattern for reasoning and tool selection
 - **DuckDuckGo Search**: Search the web for information
 - **URL Scraping**: Parse HTML content into readable markdown using [pyreadability](https://github.com/randerzander/pyreadability)
-- **OpenRouter Integration**: Uses OpenRouter API with tngtech/deepseek-r1t2-chimera:free model
+- **Code Writing**: Generate code using AI with automatic multi-file project support
+- **OpenRouter Integration**: Uses OpenRouter API with tngtech/deepseek-r1t2-chimera:free model for reasoning and kwaipilot/kat-coder-pro:free for code generation
 
 ## Installation
 
@@ -150,6 +151,11 @@ The ReAct agent follows a thought-action-observation loop:
   - Input: A URL to scrape
   - Output: Markdown-formatted content extracted from the page
 
+- `write_code`: Write code using AI code generation
+  - Input: A detailed description of the code to write
+  - Output: Generated code. If multiple files are detected, they are saved to a timestamped directory (e.g., `generated_code_20231208_153045`)
+  - Model: Uses `kwaipilot/kat-coder-pro:free` for code generation
+
 ## Example
 
 ```
@@ -166,12 +172,36 @@ Thought: Based on the search results, I can see recent developments in AI...
 Final Answer: [Comprehensive answer based on search results]
 ```
 
+### Code Writing Example
+
+```
+Question: Write a simple Python Flask web application with routes for home and about pages.
+
+Iteration 1:
+Thought: I need to write code for a Flask web application with multiple routes.
+Action: write_code
+Action Input: Create a Python Flask web application with a home route (/) that returns "Welcome to my app!" and an about route (/about) that returns "About this app". Include necessary imports and if __name__ == '__main__' block to run the app.
+Observation: Code saved to directory 'generated_code_20231208_153045' with the following files:
+  - app.py
+  - requirements.txt
+
+Total files: 2
+
+Iteration 2:
+Thought: The code has been generated and saved. I can provide the final answer.
+Final Answer: I've created a Flask web application with home and about routes. The code has been saved to the 'generated_code_20231208_153045' directory with two files:
+- app.py: Contains the Flask application with routes
+- requirements.txt: Lists the Flask dependency
+You can run the app by installing dependencies (pip install -r requirements.txt) and running python app.py.
+```
+
 ## Repository Structure
 
 - `react_agent.py` - Main implementation of the ReAct agent
 - `example.py` - Example usage with multiple scenarios
 - `discord_bot.py` - Discord bot wrapper for the ReAct agent
 - `test_react_agent.py` - Test suite for the agent
+- `test_code_writing.py` - Test suite for the code writing tool
 - `test_uv_venv.py` - Test script for uv virtual environment setup
 - `requirements.txt` - Python dependencies
 - `.env.example` - Example environment configuration
