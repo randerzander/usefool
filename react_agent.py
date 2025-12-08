@@ -7,11 +7,23 @@ Uses OpenRouter API with deepseek-r1t2-chimera:free model.
 import os
 import json
 import re
+import logging
+import time
 from typing import List, Dict, Any, Optional
 from duckduckgo_search import DDGS
 from pyreadability import Readability
 import html2text
 import requests
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Token calculation constant
+CHARS_PER_TOKEN = 4.5
 
 
 # Tool implementations
@@ -174,12 +186,30 @@ Question: {question}
             ]
         }
         
+        # Calculate input tokens
+        input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
+        
+        # Log LLM call
+        logger.info(f"LLM call started - Model: {self.model}, Input tokens: {input_tokens}")
+        start_time = time.time()
+        
         try:
             response = requests.post(self.api_url, headers=headers, json=data, timeout=self.API_TIMEOUT)
             response.raise_for_status()
             result = response.json()
-            return result["choices"][0]["message"]["content"]
+            content = result["choices"][0]["message"]["content"]
+            
+            # Calculate output tokens and response time
+            output_tokens = int(len(content) / CHARS_PER_TOKEN)
+            response_time = time.time() - start_time
+            
+            # Log LLM response
+            logger.info(f"LLM call completed - Model: {self.model}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+            
+            return content
         except Exception as e:
+            response_time = time.time() - start_time
+            logger.error(f"LLM call failed - Model: {self.model}, Response time: {response_time:.2f}s, Error: {str(e)}")
             return f"Error calling LLM: {str(e)}"
     
     def _parse_response(self, response: str) -> Dict[str, Optional[str]]:
@@ -234,7 +264,11 @@ Question: {question}
             Result from the tool execution
         """
         if action not in self.tools:
+            logger.warning(f"Unknown action attempted: {action}")
             return f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
+        
+        # Log tool usage
+        logger.info(f"Tool used: {action}, Arguments: {action_input}")
         
         tool_info = self.tools[action]
         tool_function = tool_info["function"]
@@ -247,20 +281,26 @@ Question: {question}
                 formatted_results = []
                 for i, r in enumerate(result[:5], 1):
                     if "error" in r:
+                        logger.error(f"Tool {action} failed: {r['error']}")
                         return r["error"]
                     formatted_results.append(
                         f"{i}. {r.get('title', 'N/A')}\n   URL: {r.get('href', 'N/A')}\n   {r.get('body', 'N/A')[:200]}..."
                     )
+                logger.info(f"Tool {action} completed successfully, returned {len(formatted_results)} results")
                 return "\n\n".join(formatted_results)
             elif action == "scrape_url":
                 result = tool_function(action_input)
                 # Limit result length to avoid overwhelming the context
                 if len(result) > self.MAX_CONTENT_LENGTH:
                     result = result[:self.MAX_CONTENT_LENGTH] + "\n\n[Content truncated...]"
+                logger.info(f"Tool {action} completed successfully, scraped {len(result)} characters")
                 return result
             else:
-                return str(tool_function(action_input))
+                result = str(tool_function(action_input))
+                logger.info(f"Tool {action} completed successfully")
+                return result
         except Exception as e:
+            logger.error(f"Tool {action} failed with exception: {str(e)}")
             return f"Error executing action: {str(e)}"
     
     def run(self, question: str, max_iterations: int = 5, verbose: bool = True) -> str:

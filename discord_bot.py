@@ -11,8 +11,20 @@ import asyncio
 import discord
 import requests
 import json
+import logging
+import time
 from datetime import datetime
 from react_agent import ReActAgent
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Token calculation constant
+CHARS_PER_TOKEN = 4.5
 
 
 class ReActDiscordBot:
@@ -239,6 +251,9 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
+                # Log the user query
+                logger.info(f"User query received from {message.author.display_name}: {question}")
+                
                 # Get reply chain context if this is a reply
                 reply_context = await get_reply_chain(message)
                 
@@ -356,6 +371,13 @@ class ReActDiscordBot:
             ]
         }
         
+        # Calculate input tokens
+        input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
+        
+        # Log LLM call
+        logger.info(f"LLM call started - Model: {model_to_use}, Input tokens: {input_tokens}")
+        start_time = time.time()
+        
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
@@ -364,7 +386,16 @@ class ReActDiscordBot:
         )
         response.raise_for_status()
         result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
+        content = result["choices"][0]["message"]["content"].strip()
+        
+        # Calculate output tokens and response time
+        output_tokens = int(len(content) / CHARS_PER_TOKEN)
+        response_time = time.time() - start_time
+        
+        # Log LLM response
+        logger.info(f"LLM call completed - Model: {model_to_use}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+        
+        return content
     
     def _detect_intent(self, message: str) -> dict:
         """
