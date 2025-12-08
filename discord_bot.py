@@ -216,6 +216,9 @@ class ReActDiscordBot:
                 # Reset tracking for new query
                 self._reset_query_tracking()
                 
+                # Track start time for total response time
+                query_start_time = time.time()
+                
                 # Get reply chain context if this is a reply (also gets images from reply chain)
                 reply_context, reply_image_urls = await get_reply_chain(message)
                 
@@ -300,6 +303,34 @@ class ReActDiscordBot:
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         # If we can't remove the reaction, continue anyway
                         pass
+                    
+                    # Calculate total response time
+                    total_response_time = time.time() - query_start_time
+                    
+                    # Get tracking data from agent and merge with discord bot stats
+                    agent_tracking = self.agent.get_tracking_data()
+                    merged_token_stats = dict(self.current_query_token_stats)
+                    for model, stats in agent_tracking["token_stats"].items():
+                        if model not in merged_token_stats:
+                            merged_token_stats[model] = {
+                                "total_input_tokens": 0,
+                                "total_output_tokens": 0,
+                                "total_calls": 0
+                            }
+                        merged_token_stats[model]["total_input_tokens"] += stats["total_input_tokens"]
+                        merged_token_stats[model]["total_output_tokens"] += stats["total_output_tokens"]
+                        merged_token_stats[model]["total_calls"] += stats["total_calls"]
+                    
+                    # Calculate totals across all models
+                    total_input_tokens = sum(stats["total_input_tokens"] for stats in merged_token_stats.values())
+                    total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
+                    
+                    # Format metadata in small font
+                    models_used = ", ".join(merged_token_stats.keys())
+                    metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out • Time: {round(total_response_time)}s*"
+                    
+                    # Append metadata to answer
+                    answer = answer + metadata
                     
                     # Save the complete answer before sending it
                     complete_answer = answer
