@@ -13,8 +13,9 @@ def test_tldr_prefix_stripping():
     # Simulate the logic from _add_tldr_to_response
     def strip_tldr_prefix(tldr):
         tldr = tldr.strip()
-        if tldr.lower().startswith("tl;dr:"):
-            tldr = tldr[6:].strip()
+        tldr_prefix = "tl;dr:"
+        if tldr.lower().startswith(tldr_prefix):
+            tldr = tldr[len(tldr_prefix):].strip()
         return tldr
     
     # Test case 1: With "TL;DR:" prefix

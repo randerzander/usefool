@@ -38,8 +38,9 @@ def verify_tldr_fix():
     for input_str, expected_output in test_cases:
         # Simulate the fix logic
         tldr = input_str.strip()
-        if tldr.lower().startswith("tl;dr:"):
-            tldr = tldr[6:].strip()
+        tldr_prefix = "tl;dr:"
+        if tldr.lower().startswith(tldr_prefix):
+            tldr = tldr[len(tldr_prefix):].strip()
         
         status = "✓" if tldr == expected_output else "✗"
         print(f"  {status} Input: '{input_str}' → Output: '{tldr}'")
