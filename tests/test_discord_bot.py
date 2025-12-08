@@ -194,7 +194,9 @@ def test_tldr_addition():
         assert "TL;DR" in result, "Should add TL;DR to long responses"
         assert "---" in result, "Should include separator"
         assert long_response in result, "Should include original response"
-        print("✓ TL;DR added to long response")
+        # Check that TL;DR appears after the original response
+        assert result.find(long_response) < result.find("TL;DR"), "TL;DR should be at the end"
+        print("✓ TL;DR added to long response at the end")
         
         # Test case 3: Error handling
         print("\nTest 3: Error handling for TL;DR generation")

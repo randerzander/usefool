@@ -9,7 +9,9 @@ import json
 import re
 import logging
 import time
+import base64
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 from duckduckgo_search import DDGS
 from pyreadability import Readability
 import html2text
@@ -83,6 +85,203 @@ def scrape_url(url: str) -> str:
         return markdown_content
     except Exception as e:
         return f"Error scraping URL: {str(e)}"
+
+
+def download_image(url: str, save_path: str = None) -> str:
+    """
+    Download an image from a URL and save it locally.
+    
+    Args:
+        url: URL of the image to download
+        save_path: Optional path to save the image. If None, saves to /tmp/
+        
+    Returns:
+        Path to the downloaded image
+    """
+    try:
+        response = requests.get(url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
+        response.raise_for_status()
+        
+        # Determine save path
+        if save_path is None:
+            # Extract filename from URL or generate one
+            filename = url.split('/')[-1].split('?')[0]
+            if not filename or '.' not in filename:
+                filename = f"image_{int(time.time())}.png"
+            save_path = f"/tmp/{filename}"
+        
+        # Ensure directory exists
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save the image
+        with open(save_path, 'wb') as f:
+            f.write(response.content)
+        
+        return save_path
+    except Exception as e:
+        raise Exception(f"Error downloading image: {str(e)}")
+
+
+def image_to_base64(image_path: str) -> str:
+    """
+    Convert an image file to base64 string.
+    
+    Args:
+        image_path: Path to the image file
+        
+    Returns:
+        Base64 encoded string of the image
+    """
+    with open(image_path, 'rb') as f:
+        return base64.b64encode(f.read()).decode('utf-8')
+
+
+def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = "nvidia/nemotron-nano-12b-v2-vl:free") -> str:
+    """
+    Caption an image using a Vision Language Model (VLM) via OpenRouter API.
+    
+    Args:
+        image_url: URL of the image to caption
+        api_key: OpenRouter API key
+        prompt: Optional custom prompt for captioning. If None, uses default.
+        model: VLM model to use for captioning
+        
+    Returns:
+        Caption text from the VLM
+    """
+    try:
+        # Download the image
+        image_path = download_image(image_url)
+        
+        # Convert to base64
+        image_base64 = image_to_base64(image_path)
+        
+        # Determine the image MIME type from extension
+        ext = Path(image_path).suffix.lower()
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        }
+        mime_type = mime_types.get(ext, 'image/jpeg')
+        
+        # Default prompt if none provided
+        if prompt is None:
+            prompt = "Describe this image in detail. What do you see?"
+        
+        # Prepare the API request with image
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        logger.info(f"Captioning image with VLM - Model: {model}")
+        start_time = time.time()
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        response.raise_for_status()
+        result = response.json()
+        content = result["choices"][0]["message"]["content"].strip()
+        
+        response_time = time.time() - start_time
+        logger.info(f"Image caption completed - Model: {model}, Response time: {response_time:.2f}s")
+        
+        # Clean up the downloaded image
+        try:
+            os.remove(image_path)
+        except (FileNotFoundError, PermissionError) as e:
+            logger.warning(f"Failed to clean up temporary image {image_path}: {str(e)}")
+        
+        return content
+    except Exception as e:
+        return f"Error captioning image: {str(e)}"
+
+
+def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = "nvidia/nemotron-nano-12b-v2-vl:free") -> str:
+    """
+    Perform two-round image captioning:
+    1. First round: Get a basic caption of the image
+    2. Second round: Get a detailed caption based on the user's query
+    
+    Args:
+        image_url: URL of the image to caption
+        api_key: OpenRouter API key
+        user_query: User's query/question about the image
+        model: VLM model to use for captioning
+        
+    Returns:
+        Detailed caption from the second round
+    """
+    try:
+        # First round: Basic caption
+        logger.info("Starting first round of image captioning...")
+        basic_prompt = "Describe this image in detail. What do you see? Include objects, people, actions, colors, and setting."
+        
+        try:
+            first_caption = caption_image_with_vlm(image_url, api_key, basic_prompt, model)
+        except Exception as e:
+            return f"Error in first round of captioning: {str(e)}"
+        
+        logger.info(f"First round caption: {first_caption[:100]}...")
+        
+        # Second round: Detailed caption based on user query
+        logger.info("Starting second round of image captioning with user context...")
+        
+        # Build a more specific prompt for the second round
+        if user_query:
+            second_prompt = f"""Based on the user's query: "{user_query}"
+
+Previous basic description: {first_caption}
+
+Now, provide a more detailed analysis of the image, paying particular attention to aspects relevant to the user's query. Include any additional details that might help answer their question."""
+        else:
+            second_prompt = f"""Previous description: {first_caption}
+
+Now, provide additional details about the image that weren't covered in the first description. Focus on fine details, context, and any notable aspects."""
+        
+        try:
+            second_caption = caption_image_with_vlm(image_url, api_key, second_prompt, model)
+        except Exception as e:
+            return f"Error in second round of captioning: {str(e)}\n\nFirst round result: {first_caption}"
+        
+        logger.info(f"Second round caption: {second_caption[:100]}...")
+        
+        # Combine both captions
+        combined = f"Initial Description:\n{first_caption}\n\nDetailed Analysis:\n{second_caption}"
+        
+        return combined
+    except Exception as e:
+        return f"Error in two-round captioning: {str(e)}"
 
 
 # ReAct Agent implementation
