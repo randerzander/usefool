@@ -321,6 +321,10 @@ class ReActAgent:
         }
         
         # Initialize call tracking for logging
+        self._initialize_tracking()
+    
+    def _initialize_tracking(self):
+        """Initialize or reset tracking data structures."""
         self.call_sequence = []
         self.token_stats = {}
     
@@ -329,8 +333,7 @@ class ReActAgent:
         Reset call tracking for a new query.
         Should be called at the start of each new query.
         """
-        self.call_sequence = []
-        self.token_stats = {}
+        self._initialize_tracking()
     
     def get_tracking_data(self) -> Dict[str, Any]:
         """

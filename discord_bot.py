@@ -845,8 +845,9 @@ TL;DR:"""
             # Get tracking data from agent
             agent_tracking = self.agent.get_tracking_data()
             
-            # Combine all logs (discord bot + agent)
+            # Combine all logs (discord bot + agent) and sort by timestamp for chronological order
             all_logs = self.current_query_log + agent_tracking["call_sequence"]
+            all_logs.sort(key=lambda x: x.get("timestamp", 0))
             
             # Merge token stats from agent and discord bot
             merged_token_stats = dict(self.current_query_token_stats)
