@@ -18,33 +18,45 @@ from colorama import Fore, Style
 
 
 def test_colorama_import():
-    """Test that colorama is properly imported in both modules."""
+    """Test that colorama is properly imported (now via utils module)."""
     print("Testing colorama imports...")
     print("="*60)
     
-    # Check discord_bot.py
+    # Check utils.py has colorama
+    utils_path = os.path.join(os.path.dirname(__file__), '..', 'utils.py')
+    with open(utils_path, 'r') as f:
+        content = f.read()
+    
+    assert 'from colorama import Fore, Style, init' in content, \
+        "colorama should be imported in utils.py"
+    assert 'init(autoreset=True)' in content, \
+        "colorama should be initialized in utils.py"
+    
+    print("✓ colorama properly imported and initialized in utils.py")
+    
+    # Check discord_bot.py imports from utils
     discord_bot_path = os.path.join(os.path.dirname(__file__), '..', 'discord_bot.py')
     with open(discord_bot_path, 'r') as f:
         content = f.read()
     
-    assert 'from colorama import Fore, Style, init' in content, \
-        "colorama should be imported in discord_bot.py"
-    assert 'init(autoreset=True)' in content, \
-        "colorama should be initialized in discord_bot.py"
+    assert 'from colorama import Fore, Style' in content, \
+        "colorama Fore and Style should still be imported for colored output in discord_bot.py"
+    assert 'from utils import setup_logging, CHARS_PER_TOKEN' in content, \
+        "utils should be imported in discord_bot.py"
     
-    print("✓ colorama properly imported in discord_bot.py")
+    print("✓ discord_bot.py imports colorama and utils correctly")
     
-    # Check react_agent.py
+    # Check react_agent.py imports from utils
     react_agent_path = os.path.join(os.path.dirname(__file__), '..', 'react_agent.py')
     with open(react_agent_path, 'r') as f:
         content = f.read()
     
-    assert 'from colorama import Fore, Style, init' in content, \
-        "colorama should be imported in react_agent.py"
-    assert 'init(autoreset=True)' in content, \
-        "colorama should be initialized in react_agent.py"
+    assert 'from colorama import Fore, Style' in content, \
+        "colorama Fore and Style should still be imported for colored output in react_agent.py"
+    assert 'from utils import setup_logging, CHARS_PER_TOKEN' in content, \
+        "utils should be imported in react_agent.py"
     
-    print("✓ colorama properly imported in react_agent.py")
+    print("✓ react_agent.py imports colorama and utils correctly")
     
     print("\n" + "="*60)
     print("✓ Colorama import test passed!")
