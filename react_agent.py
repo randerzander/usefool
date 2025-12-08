@@ -166,6 +166,8 @@ def _parse_code_files(response: str) -> Dict[str, str]:
             files[filename] = content
     
     # Pattern 3: Standalone filename followed by content (filename.ext:\n<content>)
+    # Matches: "filename.ext:" followed by lines that aren't code blocks or other filenames
+    # (?:(?!```|^\w+\.\w+:).*\n?)+ means: match lines that don't start with ``` or filename patterns
     pattern3 = r'\n([^\s]+\.\w+)\s*:\s*\n((?:(?!```|^\w+\.\w+:).*\n?)+)'
     matches = re.finditer(pattern3, response, re.MULTILINE)
     for match in matches:
