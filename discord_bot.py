@@ -39,6 +39,124 @@ class ReActDiscordBot:
         intents.message_content = True  # Required to read message content
         
         self.client = discord.Client(intents=intents)
+    
+    async def _read_channel_history_async(self, channel, current_message_id, count=10):
+        """
+        Async helper to read channel history.
+        
+        Args:
+            channel: The Discord channel object
+            current_message_id: The ID of the current message to exclude
+            count: Number of messages to retrieve
+            
+        Returns:
+            Formatted string with recent channel messages
+        """
+        messages = []
+        async for msg in channel.history(limit=count + 10):  # Fetch extra to account for filtering
+            # Skip the current message that triggered the bot
+            if msg.id == current_message_id:
+                continue
+            # Skip bot's own messages to avoid self-referential context
+            if msg.author == self.client.user:
+                continue
+            messages.append(msg)
+            if len(messages) >= count:
+                break
+        
+        # Format messages (oldest first)
+        messages.reverse()
+        formatted_messages = []
+        for msg in messages:
+            author_name = msg.author.display_name
+            content = msg.content
+            
+            # Remove bot mentions from content for clarity
+            content = content.replace(f"<@{self.client.user.id}>", "").strip()
+            content = content.replace(f"<@!{self.client.user.id}>", "").strip()
+            
+            # Format timestamp
+            timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            
+            if content:
+                formatted_messages.append(f"[{timestamp}] {author_name}: {content}")
+        
+        if formatted_messages:
+            return f"Recent channel history ({len(formatted_messages)} messages):\n" + "\n".join(formatted_messages)
+        else:
+            return "No recent messages found in channel history."
+    
+    def _create_channel_history_tool(self, channel, current_message_id):
+        """
+        Create a channel history reading tool for the current Discord channel.
+        
+        Args:
+            channel: The Discord channel object
+            current_message_id: The ID of the current message to exclude from history
+            
+        Returns:
+            A function that reads channel history synchronously
+        """
+        def read_channel_history(count: str = "10") -> str:
+            """
+            Read the last N messages from the Discord channel history.
+            This tool helps the bot understand recent conversation context.
+            
+            Args:
+                count: Number of messages to retrieve (default: 10)
+                
+            Returns:
+                Formatted string with recent channel messages
+            """
+            try:
+                # Parse count, default to 10 if invalid
+                try:
+                    limit = int(count)
+                    if limit < 1 or limit > 50:  # Cap at 50 to avoid overwhelming context
+                        limit = 10
+                except (ValueError, TypeError):
+                    limit = 10
+                
+                # Use asyncio.run to execute the async function
+                # This will work because the tool is called in a separate thread via asyncio.to_thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(
+                        self._read_channel_history_async(channel, current_message_id, limit)
+                    )
+                    return result
+                finally:
+                    loop.close()
+                    
+            except Exception as e:
+                return f"Error reading channel history: {str(e)}"
+        
+        return read_channel_history
+    
+    def _register_channel_history_tool(self, channel, current_message_id):
+        """
+        Register the channel history tool with the agent.
+        
+        Args:
+            channel: The Discord channel object
+            current_message_id: The ID of the current message to exclude from history
+        """
+        tool_function = self._create_channel_history_tool(channel, current_message_id)
+        
+        self.agent.tools["read_channel_history"] = {
+            "function": tool_function,
+            "description": "Read the last N messages from the Discord channel history to understand recent conversation context. Input should be a number (default: 10, max: 50).",
+            "parameters": ["count"]
+        }
+    
+    def _unregister_channel_history_tool(self):
+        """
+        Remove the channel history tool from the agent.
+        This should be called after processing each message to avoid memory leaks.
+        """
+        if "read_channel_history" in self.agent.tools:
+            del self.agent.tools["read_channel_history"]
         
         # Register event handlers
         @self.client.event
@@ -150,11 +268,17 @@ class ReActDiscordBot:
 
 {reply_context}User question: {question}"""
                     
+                    # Register channel history tool for this message processing
+                    self._register_channel_history_tool(message.channel, message.id)
+                    
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                     answer = await asyncio.to_thread(
                         self.agent.run, question_with_context, max_iterations=5, verbose=False
                     )
+                    
+                    # Unregister channel history tool to avoid memory leaks
+                    self._unregister_channel_history_tool()
                     
                     # For serious queries with long responses, add TL;DR
                     if not is_sarcastic:
@@ -182,14 +306,14 @@ class ReActDiscordBot:
                             chunks.append(answer)
                         
                         for i, chunk in enumerate(chunks):
-                            if i == 0:
-                                await message.channel.send(f"**Answer:**\n{chunk}")
-                            else:
-                                await message.channel.send(chunk)
+                            await message.channel.send(chunk)
                     else:
-                        await message.channel.send(f"**Answer:**\n{answer}")
+                        await message.channel.send(answer)
                 
                 except Exception as e:
+                    # Unregister channel history tool in case of error
+                    self._unregister_channel_history_tool()
+                    
                     # Remove the thinking emoji reaction if there was an error
                     try:
                         await message.remove_reaction("⏳", self.client.user)
