@@ -14,6 +14,10 @@ from duckduckgo_search import DDGS
 from pyreadability import Readability
 import html2text
 import requests
+from colorama import Fore, Style, init
+
+# Initialize colorama for colored output
+init(autoreset=True)
 
 # Configure logging
 logging.basicConfig(
@@ -267,7 +271,8 @@ Question: {question}
             logger.warning(f"Unknown action attempted: {action}")
             return f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
         
-        # Log tool usage
+        # Log tool usage in yellow
+        print(f"{Fore.YELLOW}[TOOL CALL] {action}: {action_input}{Style.RESET_ALL}")
         logger.info(f"Tool used: {action}, Arguments: {action_input}")
         
         tool_info = self.tools[action]

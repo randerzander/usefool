@@ -14,7 +14,12 @@ import json
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
 from react_agent import ReActAgent
+from colorama import Fore, Style, init
+
+# Initialize colorama for colored output
+init(autoreset=True)
 
 # Configure logging
 logging.basicConfig(
@@ -34,6 +39,10 @@ class ReActDiscordBot:
     DEFAULT_MODEL = "x-ai/grok-4.1-fast"
     INTENT_DETECTION_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
     
+    # Data directory for evaluation logging
+    DATA_DIR = Path("data")
+    EVAL_FILE = DATA_DIR / "eval_qs.jsonl"
+    
     def __init__(self, token: str, api_key: str):
         """
         Initialize the Discord bot with ReAct agent.
@@ -46,9 +55,13 @@ class ReActDiscordBot:
         self.api_key = api_key
         self.agent = ReActAgent(api_key)
         
+        # Ensure data directory exists
+        self.DATA_DIR.mkdir(exist_ok=True)
+        
         # Set up Discord intents
         intents = discord.Intents.default()
         intents.message_content = True  # Required to read message content
+        intents.reactions = True  # Required to read reactions
         
         self.client = discord.Client(intents=intents)
         
@@ -130,7 +143,8 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
-                # Log the user query
+                # Log the user query in green
+                print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
                 logger.info(f"User query received from {message.author.display_name}: {question}")
                 
                 # Get reply chain context if this is a reply
@@ -177,6 +191,9 @@ class ReActDiscordBot:
                     # Unregister channel history tool to avoid memory leaks
                     self._unregister_channel_history_tool()
                     
+                    # Log the final response in red
+                    print(f"{Fore.RED}[FINAL RESPONSE] {answer[:100]}...{Style.RESET_ALL}" if len(answer) > 100 else f"{Fore.RED}[FINAL RESPONSE] {answer}{Style.RESET_ALL}")
+                    
                     # For serious queries with long responses, add TL;DR
                     if not is_sarcastic:
                         answer = await asyncio.to_thread(self._add_tldr_to_response, answer)
@@ -219,6 +236,27 @@ class ReActDiscordBot:
                         pass
                     await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
+        
+        @self.client.event
+        async def on_reaction_add(reaction, user):
+            """Handle reactions added to messages."""
+            # Don't process reactions from the bot itself
+            if user == self.client.user:
+                return
+            
+            # Handle 🧪 (test tube) reaction - log question to eval file
+            if str(reaction.emoji) == "🧪":
+                message = reaction.message
+                # Only log user messages (not bot responses)
+                if message.author != self.client.user:
+                    await self._log_eval_question(message, user)
+            
+            # Handle ✅ (check mark) reaction - log accepted answer
+            elif str(reaction.emoji) == "✅":
+                message = reaction.message
+                # Only log bot responses
+                if message.author == self.client.user:
+                    await self._log_accepted_answer(message, user)
     
     async def _read_channel_history_async(self, channel, current_message_id, count=10):
         """
@@ -465,6 +503,114 @@ TL;DR:"""
                 return response
         
         return response
+    
+    async def _log_eval_question(self, message: discord.Message, user: discord.User):
+        """
+        Log a user question to the evaluation file when tagged with 🧪.
+        
+        Args:
+            message: The Discord message to log
+            user: The user who added the reaction
+        """
+        try:
+            # Extract the question text
+            question = message.content
+            # Remove bot mentions
+            question = question.replace(f"<@{self.client.user.id}>", "").strip()
+            question = question.replace(f"<@!{self.client.user.id}>", "").strip()
+            
+            if not question:
+                return
+            
+            # Create eval entry
+            eval_entry = {
+                "message_id": str(message.id),
+                "channel_id": str(message.channel.id),
+                "author": message.author.display_name,
+                "author_id": str(message.author.id),
+                "question": question,
+                "timestamp": message.created_at.isoformat(),
+                "tagged_by": user.display_name,
+                "tagged_by_id": str(user.id),
+                "accepted_answer": None
+            }
+            
+            # Append to eval file
+            with open(self.EVAL_FILE, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(eval_entry) + '\n')
+            
+            print(f"{Fore.CYAN}[EVAL] Question logged: {question[:50]}...{Style.RESET_ALL}")
+            logger.info(f"Eval question logged from {message.author.display_name}: {question}")
+            
+            # Add confirmation reaction
+            try:
+                await message.add_reaction("📝")
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
+        
+        except Exception as e:
+            logger.error(f"Failed to log eval question: {str(e)}")
+    
+    async def _log_accepted_answer(self, message: discord.Message, user: discord.User):
+        """
+        Log an accepted answer when a bot response is tagged with ✅.
+        Updates the corresponding eval entry if it exists.
+        
+        Args:
+            message: The bot's response message
+            user: The user who added the reaction
+        """
+        try:
+            answer = message.content
+            
+            # Check if this is a reply to a user question
+            if not message.reference or not message.reference.message_id:
+                return
+            
+            # Fetch the original message
+            try:
+                original_msg = await message.channel.fetch_message(message.reference.message_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+            
+            original_msg_id = str(original_msg.id)
+            
+            # Read existing eval entries
+            if not self.EVAL_FILE.exists():
+                return
+            
+            entries = []
+            updated = False
+            
+            with open(self.EVAL_FILE, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        entry = json.loads(line)
+                        # Update the entry if it matches the original message
+                        if entry.get("message_id") == original_msg_id:
+                            entry["accepted_answer"] = answer
+                            entry["accepted_by"] = user.display_name
+                            entry["accepted_by_id"] = str(user.id)
+                            entry["accepted_at"] = datetime.now().isoformat()
+                            updated = True
+                            print(f"{Fore.CYAN}[EVAL] Answer accepted for question: {entry['question'][:50]}...{Style.RESET_ALL}")
+                            logger.info(f"Accepted answer logged for message {original_msg_id}")
+                        entries.append(entry)
+            
+            # Write back all entries if we updated one
+            if updated:
+                with open(self.EVAL_FILE, 'w', encoding='utf-8') as f:
+                    for entry in entries:
+                        f.write(json.dumps(entry) + '\n')
+                
+                # Add confirmation reaction
+                try:
+                    await message.add_reaction("💚")
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    pass
+        
+        except Exception as e:
+            logger.error(f"Failed to log accepted answer: {str(e)}")
     
     def run(self):
         """Start the Discord bot."""

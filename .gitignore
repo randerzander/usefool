@@ -12,3 +12,4 @@ build/
 scraper/
 token.txt
 =*
+data/*.jsonl
