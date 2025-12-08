@@ -5,6 +5,10 @@ This script verifies that the Discord bot properly handles long-running operatio
 without blocking the event loop and correctly detects user intent.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import asyncio
 import time
 import json
@@ -242,6 +246,155 @@ def test_intent_detection_uses_fast_model():
     print("="*60)
 
 
+def test_channel_history_tool_registration():
+    """
+    Test that the channel history tool can be registered and unregistered properly.
+    """
+    print("\nTesting channel history tool registration...")
+    print("="*60)
+    
+    with patch('discord_bot.discord.Client') as MockClient, \
+         patch('discord_bot.ReActAgent') as MockAgent:
+        
+        # Create bot instance
+        mock_agent_instance = Mock()
+        mock_agent_instance.tools = {}
+        MockAgent.return_value = mock_agent_instance
+        
+        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot.agent.tools = {}  # Reset tools
+        
+        # Create a mock channel
+        mock_channel = Mock()
+        mock_message_id = 12345
+        
+        print("\nTest 1: Register channel history tool")
+        bot._register_channel_history_tool(mock_channel, mock_message_id)
+        
+        assert "read_channel_history" in bot.agent.tools, "Tool should be registered"
+        assert "function" in bot.agent.tools["read_channel_history"], "Tool should have a function"
+        assert "description" in bot.agent.tools["read_channel_history"], "Tool should have a description"
+        print("✓ Channel history tool registered successfully")
+        print(f"  Description: {bot.agent.tools['read_channel_history']['description'][:80]}...")
+        
+        print("\nTest 2: Unregister channel history tool")
+        bot._unregister_channel_history_tool()
+        
+        assert "read_channel_history" not in bot.agent.tools, "Tool should be unregistered"
+        print("✓ Channel history tool unregistered successfully")
+        
+        print("\nTest 3: Unregister when tool not present (should not error)")
+        bot._unregister_channel_history_tool()
+        print("✓ Unregistering non-existent tool handled gracefully")
+    
+    print("\n" + "="*60)
+    print("✓ Channel history tool registration test passed!")
+    print("="*60)
+
+
+async def test_channel_history_async_reading():
+    """
+    Test that the async channel history reading function works correctly.
+    """
+    print("\nTesting async channel history reading...")
+    print("="*60)
+    
+    with patch('discord_bot.discord.Client') as MockClient, \
+         patch('discord_bot.ReActAgent') as MockAgent:
+        
+        # Create bot instance
+        bot = ReActDiscordBot("test_token", "test_api_key")
+        
+        # Create mock messages
+        mock_messages = []
+        for i in range(5):
+            mock_msg = Mock()
+            mock_msg.id = i
+            mock_msg.author.display_name = f"User{i}"
+            mock_msg.content = f"Test message {i}"
+            mock_msg.created_at.strftime = Mock(return_value="2024-01-01 12:00:00")
+            mock_messages.append(mock_msg)
+        
+        # Create mock channel with history
+        mock_channel = Mock()
+        
+        async def mock_history(limit=10):
+            for msg in mock_messages:
+                yield msg
+        
+        mock_channel.history = mock_history
+        
+        # Mock bot's user ID
+        bot.client.user = Mock()
+        bot.client.user.id = 999
+        
+        print("\nTest 1: Read channel history")
+        result = await bot._read_channel_history_async(mock_channel, 999, count=3)
+        
+        print(f"Result preview: {result[:100]}...")
+        assert "Recent channel history" in result, "Should have history header"
+        assert "User0: Test message 0" in result, "Should contain first message"
+        print("✓ Channel history read successfully")
+        
+        print("\nTest 2: Handle empty result")
+        mock_channel_empty = Mock()
+        
+        async def mock_empty_history(limit=10):
+            # Empty async generator
+            return
+            yield  # This makes it a generator but is never reached
+        
+        mock_channel_empty.history = mock_empty_history
+        
+        result_empty = await bot._read_channel_history_async(mock_channel_empty, 999, count=3)
+        assert "No recent messages found" in result_empty, "Should indicate no messages"
+        print("✓ Empty history handled correctly")
+    
+    print("\n" + "="*60)
+    print("✓ Async channel history reading test passed!")
+    print("="*60)
+
+
+def test_no_answer_prefix():
+    """
+    Test that responses don't include the 'Answer:' prefix.
+    """
+    print("\nTesting that responses don't include 'Answer:' prefix...")
+    print("="*60)
+    
+    # Read the discord_bot.py file to verify the changes
+    discord_bot_path = os.path.join(os.path.dirname(__file__), '..', 'discord_bot.py')
+    with open(discord_bot_path, 'r') as f:
+        content = f.read()
+    
+    # Check that "**Answer:**\n" is not in the send calls
+    print("\nTest 1: Check for 'Answer:' prefix removal")
+    
+    # Look for the pattern that would indicate the old behavior
+    old_pattern = 'f"**Answer:**\\n{chunk}"'
+    old_pattern2 = 'f"**Answer:**\\n{answer}"'
+    
+    assert old_pattern not in content, "Old 'Answer:' pattern should be removed from chunks"
+    assert old_pattern2 not in content, "Old 'Answer:' pattern should be removed from single response"
+    
+    print("✓ No 'Answer:' prefix found in send calls")
+    
+    # Check that simple send calls exist instead
+    simple_send_pattern = 'await message.channel.send(chunk)'
+    simple_send_pattern2 = 'await message.channel.send(answer)'
+    
+    assert simple_send_pattern in content or 'message.channel.send(chunk)' in content, \
+        "Should have simple send for chunks"
+    assert simple_send_pattern2 in content or 'message.channel.send(answer)' in content, \
+        "Should have simple send for answer"
+    
+    print("✓ Simple send calls found (without 'Answer:' prefix)")
+    
+    print("\n" + "="*60)
+    print("✓ Answer prefix removal test passed!")
+    print("="*60)
+
+
 
 if __name__ == "__main__":
     print("Discord Bot Tests")
@@ -262,6 +415,15 @@ if __name__ == "__main__":
     # Test 5: Verify fast model is used for intent detection
     test_intent_detection_uses_fast_model()
     
+    # Test 6: Verify channel history tool registration
+    test_channel_history_tool_registration()
+    
+    # Test 7: Verify async channel history reading
+    asyncio.run(test_channel_history_async_reading())
+    
+    # Test 8: Verify 'Answer:' prefix is removed
+    test_no_answer_prefix()
+    
     print("\n" + "="*60)
     print("✓ ALL DISCORD BOT TESTS PASSED!")
     print("="*60)
@@ -275,5 +437,7 @@ if __name__ == "__main__":
     print("4. Responds concisely and sarcastically to sarcastic queries")
     print("5. Provides thorough responses to serious queries")
     print("6. Adds TL;DR to long responses")
+    print("7. Reads channel history with new read_channel_history tool")
+    print("8. Does NOT prepend responses with 'Answer:'")
     print("="*60)
 
