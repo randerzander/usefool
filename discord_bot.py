@@ -21,7 +21,7 @@ except ImportError:
     HAS_FCNTL = False
 from datetime import datetime
 from pathlib import Path
-from react_agent import ReActAgent
+from react_agent import ReActAgent, two_round_image_caption
 from colorama import Fore, Style, init
 
 # Initialize colorama for colored output
@@ -145,9 +145,22 @@ class ReActDiscordBot:
                 question = question.replace(f"<@{self.client.user.id}>", "").strip()
                 question = question.replace(f"<@!{self.client.user.id}>", "").strip()
                 
-                if not question:
+                # Check for image attachments
+                image_urls = []
+                if message.attachments:
+                    for attachment in message.attachments:
+                        # Check if attachment is an image
+                        if attachment.content_type and attachment.content_type.startswith('image/'):
+                            image_urls.append(attachment.url)
+                            logger.info(f"Found image attachment: {attachment.url}")
+                
+                if not question and not image_urls:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
+                
+                # If there are images but no question, provide a default question
+                if not question and image_urls:
+                    question = "What do you see in this image?"
                 
                 # Log the user query in green
                 print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
@@ -171,22 +184,34 @@ class ReActDiscordBot:
                     # Add current datetime to the query so the bot can consider current time
                     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     
+                    # Build image context if images are present
+                    image_context = ""
+                    if image_urls:
+                        image_context = f"\n\n[Images attached: {len(image_urls)} image(s)]\n"
+                        for i, img_url in enumerate(image_urls, 1):
+                            image_context += f"Image {i} URL: {img_url}\n"
+                        image_context += "\nYou can use the 'caption_image' tool to analyze these images.\n"
+                    
                     # Modify the question based on intent
                     if is_sarcastic:
                         # For sarcastic queries, instruct agent to be concise and sarcastic
                         question_with_context = f"""[Current date and time: {current_time}]
 [User Intent: Sarcastic/Humorous - Respond with wit, sarcasm, and keep it VERY concise (2-3 sentences max)]
-
+{image_context}
 {reply_context}User question: {question}"""
                     else:
                         # For serious queries, instruct agent to be thorough
                         question_with_context = f"""[Current date and time: {current_time}]
 [User Intent: Serious - Provide a thorough, informative response]
-
+{image_context}
 {reply_context}User question: {question}"""
                     
                     # Register channel history tool for this message processing
                     self._register_channel_history_tool(message.channel, message.id)
+                    
+                    # Register image caption tool if images are present
+                    if image_urls:
+                        self._register_image_caption_tool(question)
                     
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
@@ -196,6 +221,10 @@ class ReActDiscordBot:
                     
                     # Unregister channel history tool to avoid memory leaks
                     self._unregister_channel_history_tool()
+                    
+                    # Unregister image caption tool if it was registered
+                    if image_urls:
+                        self._unregister_image_caption_tool()
                     
                     # Log the final response in red
                     print(f"{Fore.RED}[FINAL RESPONSE] {answer[:100]}...{Style.RESET_ALL}" if len(answer) > 100 else f"{Fore.RED}[FINAL RESPONSE] {answer}{Style.RESET_ALL}")
@@ -233,6 +262,9 @@ class ReActDiscordBot:
                 except Exception as e:
                     # Unregister channel history tool in case of error
                     self._unregister_channel_history_tool()
+                    
+                    # Unregister image caption tool in case of error
+                    self._unregister_image_caption_tool()
                     
                     # Remove the thinking emoji reaction if there was an error
                     try:
@@ -384,6 +416,64 @@ class ReActDiscordBot:
         """
         if "read_channel_history" in self.agent.tools:
             del self.agent.tools["read_channel_history"]
+    
+    def _create_image_caption_tool(self, user_query: str):
+        """
+        Create an image caption tool for the current message.
+        
+        Args:
+            user_query: The user's query/question about the image
+            
+        Returns:
+            A function that captions images using two-round captioning
+        """
+        def caption_image(image_url: str) -> str:
+            """
+            Caption an image using two-round captioning with nemotron VLM.
+            First round gets a basic caption, second round provides detailed analysis
+            based on the user's query.
+            
+            Args:
+                image_url: URL of the image to caption
+                
+            Returns:
+                Detailed caption from two-round analysis
+            """
+            try:
+                result = two_round_image_caption(
+                    image_url=image_url,
+                    api_key=self.api_key,
+                    user_query=user_query,
+                    model="nvidia/nemotron-nano-12b-v2-vl:free"
+                )
+                return result
+            except Exception as e:
+                return f"Error captioning image: {str(e)}"
+        
+        return caption_image
+    
+    def _register_image_caption_tool(self, user_query: str):
+        """
+        Register the image caption tool with the agent.
+        
+        Args:
+            user_query: The user's query/question about the image
+        """
+        tool_function = self._create_image_caption_tool(user_query)
+        
+        self.agent.tools["caption_image"] = {
+            "function": tool_function,
+            "description": "Caption an image using two-round analysis with a Vision Language Model. First round provides a basic description, second round gives detailed analysis based on the user's query. Input should be an image URL.",
+            "parameters": ["image_url"]
+        }
+    
+    def _unregister_image_caption_tool(self):
+        """
+        Remove the image caption tool from the agent.
+        This should be called after processing each message to avoid memory leaks.
+        """
+        if "caption_image" in self.agent.tools:
+            del self.agent.tools["caption_image"]
     
     def _call_llm(self, prompt: str, timeout: int = 10, model: str = None) -> str:
         """
