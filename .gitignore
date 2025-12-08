@@ -13,3 +13,4 @@ scraper/
 token.txt
 =*
 data/*.jsonl
+data/query_logs/*.json

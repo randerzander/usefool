@@ -319,6 +319,30 @@ class ReActAgent:
                 "parameters": ["url"]
             }
         }
+        
+        # Initialize call tracking for logging
+        self.call_sequence = []
+        self.token_stats = {}
+    
+    def reset_tracking(self):
+        """
+        Reset call tracking for a new query.
+        Should be called at the start of each new query.
+        """
+        self.call_sequence = []
+        self.token_stats = {}
+    
+    def get_tracking_data(self) -> Dict[str, Any]:
+        """
+        Get the tracking data for logging.
+        
+        Returns:
+            Dictionary with call_sequence and token_stats
+        """
+        return {
+            "call_sequence": self.call_sequence,
+            "token_stats": self.token_stats
+        }
     
     def _create_prompt(self, question: str, history: List[Dict[str, str]]) -> str:
         """
@@ -406,13 +430,55 @@ Question: {question}
             output_tokens = int(len(content) / CHARS_PER_TOKEN)
             response_time = time.time() - start_time
             
+            # Calculate tokens/sec
+            input_tokens_per_sec = input_tokens / response_time if response_time > 0 else 0
+            output_tokens_per_sec = output_tokens / response_time if response_time > 0 else 0
+            
             # Log LLM response
             logger.info(f"LLM call completed - Model: {self.model}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+            
+            # Track call in sequence
+            call_entry = {
+                "type": "llm_call",
+                "model": self.model,
+                "timestamp": time.time(),
+                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                "output": content[:500] + "..." if len(content) > 500 else content,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "response_time_seconds": round(response_time, 2),
+                "input_tokens_per_sec": round(input_tokens_per_sec, 2),
+                "output_tokens_per_sec": round(output_tokens_per_sec, 2)
+            }
+            self.call_sequence.append(call_entry)
+            
+            # Aggregate token stats by model
+            if self.model not in self.token_stats:
+                self.token_stats[self.model] = {
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_calls": 0
+                }
+            self.token_stats[self.model]["total_input_tokens"] += input_tokens
+            self.token_stats[self.model]["total_output_tokens"] += output_tokens
+            self.token_stats[self.model]["total_calls"] += 1
             
             return content
         except Exception as e:
             response_time = time.time() - start_time
             logger.error(f"LLM call failed - Model: {self.model}, Response time: {response_time:.2f}s, Error: {str(e)}")
+            
+            # Track failed call in sequence
+            call_entry = {
+                "type": "llm_call",
+                "model": self.model,
+                "timestamp": time.time(),
+                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                "error": str(e),
+                "response_time_seconds": round(response_time, 2)
+            }
+            self.call_sequence.append(call_entry)
+            
             return f"Error calling LLM: {str(e)}"
     
     def _parse_response(self, response: str) -> Dict[str, Optional[str]]:
@@ -468,7 +534,19 @@ Question: {question}
         """
         if action not in self.tools:
             logger.warning(f"Unknown action attempted: {action}")
-            return f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
+            error_msg = f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
+            
+            # Track failed tool call
+            tool_entry = {
+                "type": "tool_call",
+                "tool_name": action,
+                "timestamp": time.time(),
+                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "error": error_msg
+            }
+            self.call_sequence.append(tool_entry)
+            
+            return error_msg
         
         # Log tool usage in yellow
         print(f"{Fore.YELLOW}[TOOL CALL] {action}: {action_input}{Style.RESET_ALL}")
@@ -476,6 +554,8 @@ Question: {question}
         
         tool_info = self.tools[action]
         tool_function = tool_info["function"]
+        
+        start_time = time.time()
         
         try:
             # Call the tool function with the action input
@@ -486,26 +566,88 @@ Question: {question}
                 for i, r in enumerate(result[:5], 1):
                     if "error" in r:
                         logger.error(f"Tool {action} failed: {r['error']}")
+                        
+                        # Track failed tool call
+                        tool_entry = {
+                            "type": "tool_call",
+                            "tool_name": action,
+                            "timestamp": time.time(),
+                            "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                            "error": r["error"],
+                            "execution_time_seconds": round(time.time() - start_time, 2)
+                        }
+                        self.call_sequence.append(tool_entry)
+                        
                         return r["error"]
                     formatted_results.append(
                         f"{i}. {r.get('title', 'N/A')}\n   URL: {r.get('href', 'N/A')}\n   {r.get('body', 'N/A')[:200]}..."
                     )
                 logger.info(f"Tool {action} completed successfully, returned {len(formatted_results)} results")
-                return "\n\n".join(formatted_results)
+                output = "\n\n".join(formatted_results)
+                
+                # Track successful tool call
+                tool_entry = {
+                    "type": "tool_call",
+                    "tool_name": action,
+                    "timestamp": time.time(),
+                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                    "output": output[:500] + "..." if len(output) > 500 else output,
+                    "execution_time_seconds": round(time.time() - start_time, 2)
+                }
+                self.call_sequence.append(tool_entry)
+                
+                return output
             elif action == "scrape_url":
                 result = tool_function(action_input)
                 # Limit result length to avoid overwhelming the context
                 if len(result) > self.MAX_CONTENT_LENGTH:
                     result = result[:self.MAX_CONTENT_LENGTH] + "\n\n[Content truncated...]"
                 logger.info(f"Tool {action} completed successfully, scraped {len(result)} characters")
+                
+                # Track successful tool call
+                tool_entry = {
+                    "type": "tool_call",
+                    "tool_name": action,
+                    "timestamp": time.time(),
+                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "execution_time_seconds": round(time.time() - start_time, 2)
+                }
+                self.call_sequence.append(tool_entry)
+                
                 return result
             else:
                 result = str(tool_function(action_input))
                 logger.info(f"Tool {action} completed successfully")
+                
+                # Track successful tool call
+                tool_entry = {
+                    "type": "tool_call",
+                    "tool_name": action,
+                    "timestamp": time.time(),
+                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "execution_time_seconds": round(time.time() - start_time, 2)
+                }
+                self.call_sequence.append(tool_entry)
+                
                 return result
         except Exception as e:
             logger.error(f"Tool {action} failed with exception: {str(e)}")
-            return f"Error executing action: {str(e)}"
+            error_msg = f"Error executing action: {str(e)}"
+            
+            # Track failed tool call
+            tool_entry = {
+                "type": "tool_call",
+                "tool_name": action,
+                "timestamp": time.time(),
+                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "error": error_msg,
+                "execution_time_seconds": round(time.time() - start_time, 2)
+            }
+            self.call_sequence.append(tool_entry)
+            
+            return error_msg
     
     def run(self, question: str, max_iterations: int = 5, verbose: bool = True) -> str:
         """
