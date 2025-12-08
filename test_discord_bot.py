@@ -336,14 +336,14 @@ async def test_channel_history_async_reading():
         mock_channel_empty = Mock()
         
         async def mock_empty_history(limit=10):
-            # Empty async generator - yields nothing
-            if False:
-                yield
+            # Empty async generator
+            return
+            yield  # This makes it a generator but is never reached
         
         mock_channel_empty.history = mock_empty_history
         
         result_empty = await bot._read_channel_history_async(mock_channel_empty, 999, count=3)
-        assert "No recent messages" in result_empty, "Should indicate no messages"
+        assert "No recent messages found" in result_empty, "Should indicate no messages"
         print("✓ Empty history handled correctly")
     
     print("\n" + "="*60)
