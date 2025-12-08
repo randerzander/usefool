@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple ReAct Agent with DuckDuckGo search and URL scraping capabilities.
-Uses OpenRouter API with deepseek-r1t2-chimera:free model.
+Uses OpenRouter API with configurable models.
 """
 
 import os
@@ -10,6 +10,7 @@ import re
 import logging
 import time
 import base64
+import yaml
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from duckduckgo_search import DDGS
@@ -30,6 +31,29 @@ logger = logging.getLogger(__name__)
 
 # Token calculation constant
 CHARS_PER_TOKEN = 4.5
+
+
+# Load model configuration
+def load_model_config():
+    """Load model configuration from model_config.yaml."""
+    config_path = Path(__file__).parent / "model_config.yaml"
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.warning(f"Model config file not found at {config_path}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
+        }
+    except Exception as e:
+        logger.error(f"Error loading model config: {e}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
+        }
+
+MODEL_CONFIG = load_model_config()
 
 
 # Tool implementations
@@ -138,7 +162,7 @@ def image_to_base64(image_path: str) -> str:
         return base64.b64encode(f.read()).decode('utf-8')
 
 
-def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = "nvidia/nemotron-nano-12b-v2-vl:free") -> str:
+def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = None) -> str:
     """
     Caption an image using a Vision Language Model (VLM) via OpenRouter API.
     
@@ -146,7 +170,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         image_url: URL of the image to caption
         api_key: OpenRouter API key
         prompt: Optional custom prompt for captioning. If None, uses default.
-        model: VLM model to use for captioning
+        model: VLM model to use for captioning. If None, uses config default.
         
     Returns:
         Caption text from the VLM
@@ -172,6 +196,10 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         # Default prompt if none provided
         if prompt is None:
             prompt = "Describe this image in detail. What do you see?"
+        
+        # Use config default if model not specified
+        if model is None:
+            model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
         
         # Prepare the API request with image
         headers = {
@@ -227,7 +255,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         return f"Error captioning image: {str(e)}"
 
 
-def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = "nvidia/nemotron-nano-12b-v2-vl:free") -> str:
+def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = None) -> str:
     """
     Perform two-round image captioning:
     1. First round: Get a basic caption of the image
@@ -237,12 +265,16 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         image_url: URL of the image to caption
         api_key: OpenRouter API key
         user_query: User's query/question about the image
-        model: VLM model to use for captioning
+        model: VLM model to use for captioning. If None, uses config default.
         
     Returns:
         Detailed caption from the second round
     """
     try:
+        # Use config default if model not specified
+        if model is None:
+            model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
+        
         # First round: Basic caption
         logger.info("Starting first round of image captioning...")
         basic_prompt = "Describe this image in detail. What do you see? Include objects, people, actions, colors, and setting."
@@ -294,16 +326,16 @@ class ReActAgent:
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
     API_TIMEOUT = 30  # Timeout for API calls in seconds
     
-    def __init__(self, api_key: str, model: str = "x-ai/grok-4.1-fast"):
+    def __init__(self, api_key: str, model: str = None):
         """
         Initialize the ReAct agent.
         
         Args:
             api_key: OpenRouter API key
-            model: Model to use for reasoning
+            model: Model to use for reasoning. If None, uses config default.
         """
         self.api_key = api_key
-        self.model = model
+        self.model = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
         
         # Define available tools
@@ -318,6 +350,33 @@ class ReActAgent:
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
             }
+        }
+        
+        # Initialize call tracking for logging
+        self._initialize_tracking()
+    
+    def _initialize_tracking(self):
+        """Initialize or reset tracking data structures."""
+        self.call_sequence = []
+        self.token_stats = {}
+    
+    def reset_tracking(self):
+        """
+        Reset call tracking for a new query.
+        Should be called at the start of each new query.
+        """
+        self._initialize_tracking()
+    
+    def get_tracking_data(self) -> Dict[str, Any]:
+        """
+        Get the tracking data for logging.
+        
+        Returns:
+            Dictionary with call_sequence and token_stats
+        """
+        return {
+            "call_sequence": self.call_sequence,
+            "token_stats": self.token_stats
         }
     
     def _create_prompt(self, question: str, history: List[Dict[str, str]]) -> str:
@@ -406,13 +465,55 @@ Question: {question}
             output_tokens = int(len(content) / CHARS_PER_TOKEN)
             response_time = time.time() - start_time
             
+            # Calculate tokens/sec
+            input_tokens_per_sec = input_tokens / response_time if response_time > 0 else 0
+            output_tokens_per_sec = output_tokens / response_time if response_time > 0 else 0
+            
             # Log LLM response
             logger.info(f"LLM call completed - Model: {self.model}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+            
+            # Track call in sequence
+            call_entry = {
+                "type": "llm_call",
+                "model": self.model,
+                "timestamp": time.time(),
+                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                "output": content[:500] + "..." if len(content) > 500 else content,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "response_time_seconds": round(response_time, 2),
+                "input_tokens_per_sec": round(input_tokens_per_sec, 2),
+                "output_tokens_per_sec": round(output_tokens_per_sec, 2)
+            }
+            self.call_sequence.append(call_entry)
+            
+            # Aggregate token stats by model
+            if self.model not in self.token_stats:
+                self.token_stats[self.model] = {
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_calls": 0
+                }
+            self.token_stats[self.model]["total_input_tokens"] += input_tokens
+            self.token_stats[self.model]["total_output_tokens"] += output_tokens
+            self.token_stats[self.model]["total_calls"] += 1
             
             return content
         except Exception as e:
             response_time = time.time() - start_time
             logger.error(f"LLM call failed - Model: {self.model}, Response time: {response_time:.2f}s, Error: {str(e)}")
+            
+            # Track failed call in sequence
+            call_entry = {
+                "type": "llm_call",
+                "model": self.model,
+                "timestamp": time.time(),
+                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                "error": str(e),
+                "response_time_seconds": round(response_time, 2)
+            }
+            self.call_sequence.append(call_entry)
+            
             return f"Error calling LLM: {str(e)}"
     
     def _parse_response(self, response: str) -> Dict[str, Optional[str]]:
@@ -468,7 +569,19 @@ Question: {question}
         """
         if action not in self.tools:
             logger.warning(f"Unknown action attempted: {action}")
-            return f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
+            error_msg = f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
+            
+            # Track failed tool call
+            tool_entry = {
+                "type": "tool_call",
+                "tool_name": action,
+                "timestamp": time.time(),
+                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "error": error_msg
+            }
+            self.call_sequence.append(tool_entry)
+            
+            return error_msg
         
         # Log tool usage in yellow
         print(f"{Fore.YELLOW}[TOOL CALL] {action}: {action_input}{Style.RESET_ALL}")
@@ -476,6 +589,8 @@ Question: {question}
         
         tool_info = self.tools[action]
         tool_function = tool_info["function"]
+        
+        start_time = time.time()
         
         try:
             # Call the tool function with the action input
@@ -486,26 +601,88 @@ Question: {question}
                 for i, r in enumerate(result[:5], 1):
                     if "error" in r:
                         logger.error(f"Tool {action} failed: {r['error']}")
+                        
+                        # Track failed tool call
+                        tool_entry = {
+                            "type": "tool_call",
+                            "tool_name": action,
+                            "timestamp": time.time(),
+                            "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                            "error": r["error"],
+                            "execution_time_seconds": round(time.time() - start_time, 2)
+                        }
+                        self.call_sequence.append(tool_entry)
+                        
                         return r["error"]
                     formatted_results.append(
                         f"{i}. {r.get('title', 'N/A')}\n   URL: {r.get('href', 'N/A')}\n   {r.get('body', 'N/A')[:200]}..."
                     )
                 logger.info(f"Tool {action} completed successfully, returned {len(formatted_results)} results")
-                return "\n\n".join(formatted_results)
+                output = "\n\n".join(formatted_results)
+                
+                # Track successful tool call
+                tool_entry = {
+                    "type": "tool_call",
+                    "tool_name": action,
+                    "timestamp": time.time(),
+                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                    "output": output[:500] + "..." if len(output) > 500 else output,
+                    "execution_time_seconds": round(time.time() - start_time, 2)
+                }
+                self.call_sequence.append(tool_entry)
+                
+                return output
             elif action == "scrape_url":
                 result = tool_function(action_input)
                 # Limit result length to avoid overwhelming the context
                 if len(result) > self.MAX_CONTENT_LENGTH:
                     result = result[:self.MAX_CONTENT_LENGTH] + "\n\n[Content truncated...]"
                 logger.info(f"Tool {action} completed successfully, scraped {len(result)} characters")
+                
+                # Track successful tool call
+                tool_entry = {
+                    "type": "tool_call",
+                    "tool_name": action,
+                    "timestamp": time.time(),
+                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "execution_time_seconds": round(time.time() - start_time, 2)
+                }
+                self.call_sequence.append(tool_entry)
+                
                 return result
             else:
                 result = str(tool_function(action_input))
                 logger.info(f"Tool {action} completed successfully")
+                
+                # Track successful tool call
+                tool_entry = {
+                    "type": "tool_call",
+                    "tool_name": action,
+                    "timestamp": time.time(),
+                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "execution_time_seconds": round(time.time() - start_time, 2)
+                }
+                self.call_sequence.append(tool_entry)
+                
                 return result
         except Exception as e:
             logger.error(f"Tool {action} failed with exception: {str(e)}")
-            return f"Error executing action: {str(e)}"
+            error_msg = f"Error executing action: {str(e)}"
+            
+            # Track failed tool call
+            tool_entry = {
+                "type": "tool_call",
+                "tool_name": action,
+                "timestamp": time.time(),
+                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "error": error_msg,
+                "execution_time_seconds": round(time.time() - start_time, 2)
+            }
+            self.call_sequence.append(tool_entry)
+            
+            return error_msg
     
     def run(self, question: str, max_iterations: int = 5, verbose: bool = True) -> str:
         """

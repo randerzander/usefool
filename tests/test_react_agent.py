@@ -31,6 +31,9 @@ class MockReActAgent(ReActAgent):
                 "parameters": ["url"]
             }
         }
+        # Initialize tracking for logging
+        self.call_sequence = []
+        self.token_stats = {}
         self.test_responses = []
         self.response_index = 0
     

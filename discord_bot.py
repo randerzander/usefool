@@ -13,6 +13,7 @@ import requests
 import json
 import logging
 import time
+import yaml
 try:
     import fcntl
     HAS_FCNTL = True
@@ -38,16 +39,42 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 4.5
 
 
+# Load model configuration
+def load_model_config():
+    """Load model configuration from model_config.yaml."""
+    config_path = Path(__file__).parent / "model_config.yaml"
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.warning(f"Model config file not found at {config_path}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "intent_detection_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
+            "conciseness_model": "amazon/nova-2-lite-v1:free",
+            "tldr_model": "amazon/nova-2-lite-v1:free"
+        }
+    except Exception as e:
+        logger.error(f"Error loading model config: {e}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "intent_detection_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
+            "conciseness_model": "amazon/nova-2-lite-v1:free",
+            "tldr_model": "amazon/nova-2-lite-v1:free"
+        }
+
+MODEL_CONFIG = load_model_config()
+
+
 class ReActDiscordBot:
     """Discord bot that wraps the ReAct agent."""
-    
-    # Model configuration
-    DEFAULT_MODEL = "x-ai/grok-4.1-fast"
-    INTENT_DETECTION_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
     
     # Data directory for evaluation logging
     DATA_DIR = Path("data")
     EVAL_FILE = DATA_DIR / "eval_qs.jsonl"
+    QUERY_LOGS_DIR = DATA_DIR / "query_logs"
     
     def __init__(self, token: str, api_key: str):
         """
@@ -63,6 +90,11 @@ class ReActDiscordBot:
         
         # Ensure data directory exists
         self.DATA_DIR.mkdir(exist_ok=True)
+        self.QUERY_LOGS_DIR.mkdir(exist_ok=True)
+        
+        # Initialize tracking for current query
+        self.current_query_log = []
+        self.current_query_token_stats = {}
         
         # Set up Discord intents
         intents = discord.Intents.default()
@@ -180,6 +212,9 @@ class ReActDiscordBot:
                 print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
                 logger.info(f"User query received from {message.author.display_name}: {question}")
                 
+                # Reset tracking for new query
+                self._reset_query_tracking()
+                
                 # Get reply chain context if this is a reply (also gets images from reply chain)
                 reply_context, reply_image_urls = await get_reply_chain(message)
                 
@@ -265,6 +300,9 @@ class ReActDiscordBot:
                         # If we can't remove the reaction, continue anyway
                         pass
                     
+                    # Save the complete answer before sending it
+                    complete_answer = answer
+                    
                     # Discord has a 2000 character limit for messages
                     if len(answer) > 1900:
                         # Split the answer into multiple messages at word boundaries
@@ -283,6 +321,9 @@ class ReActDiscordBot:
                             await message.channel.send(chunk)
                     else:
                         await message.channel.send(answer)
+                    
+                    # Save query log after successful response
+                    self._save_query_log(str(message.id), question, complete_answer)
                 
                 except Exception as e:
                     # Unregister channel history tool in case of error
@@ -469,7 +510,7 @@ class ReActDiscordBot:
                     image_url=image_url,
                     api_key=self.api_key,
                     user_query=user_query,
-                    model="nvidia/nemotron-nano-12b-v2-vl:free"
+                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
                 )
                 return result
             except Exception as e:
@@ -507,7 +548,7 @@ class ReActDiscordBot:
         Args:
             prompt: The prompt to send to the LLM
             timeout: Request timeout in seconds
-            model: Model to use. If None, uses DEFAULT_MODEL
+            model: Model to use. If None, uses config default
             
         Returns:
             The LLM's response content
@@ -520,8 +561,8 @@ class ReActDiscordBot:
             "Content-Type": "application/json"
         }
         
-        # Use specified model or default to the main reasoning model
-        model_to_use = model if model is not None else self.DEFAULT_MODEL
+        # Use specified model or default to the main reasoning model from config
+        model_to_use = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         
         data = {
             "model": model_to_use,
@@ -551,8 +592,38 @@ class ReActDiscordBot:
         output_tokens = int(len(content) / CHARS_PER_TOKEN)
         response_time = time.time() - start_time
         
+        # Calculate tokens/sec
+        input_tokens_per_sec = input_tokens / response_time if response_time > 0 else 0
+        output_tokens_per_sec = output_tokens / response_time if response_time > 0 else 0
+        
         # Log LLM response
         logger.info(f"LLM call completed - Model: {model_to_use}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+        
+        # Track call in query log
+        call_entry = {
+            "type": "llm_call",
+            "model": model_to_use,
+            "timestamp": time.time(),
+            "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+            "output": content[:500] + "..." if len(content) > 500 else content,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "response_time_seconds": round(response_time, 2),
+            "input_tokens_per_sec": round(input_tokens_per_sec, 2),
+            "output_tokens_per_sec": round(output_tokens_per_sec, 2)
+        }
+        self.current_query_log.append(call_entry)
+        
+        # Aggregate token stats by model
+        if model_to_use not in self.current_query_token_stats:
+            self.current_query_token_stats[model_to_use] = {
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_calls": 0
+            }
+        self.current_query_token_stats[model_to_use]["total_input_tokens"] += input_tokens
+        self.current_query_token_stats[model_to_use]["total_output_tokens"] += output_tokens
+        self.current_query_token_stats[model_to_use]["total_calls"] += 1
         
         return content
     
@@ -576,8 +647,8 @@ Message: "{message}"
 JSON Response:"""
         
         try:
-            # Use faster model for intent detection
-            content = self._call_llm(prompt, model=self.INTENT_DETECTION_MODEL)
+            # Use intent detection model from config
+            content = self._call_llm(prompt, model=MODEL_CONFIG.get("intent_detection_model", "amazon/nova-2-lite-v1:free"))
             
             # Extract JSON from response (handle cases with markdown code blocks)
             if "```json" in content:
@@ -616,7 +687,7 @@ Original response:
 Concise version:"""
         
         try:
-            concise_response = self._call_llm(prompt)
+            concise_response = self._call_llm(prompt, model=MODEL_CONFIG.get("conciseness_model", "amazon/nova-2-lite-v1:free"))
             return concise_response
         except Exception as e:
             print(f"Failed to make response concise: {e}")
@@ -642,7 +713,7 @@ Concise version:"""
 TL;DR:"""
             
             try:
-                tldr = self._call_llm(prompt)
+                tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
                 # Format the response with TL;DR at the end
                 return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
             except Exception as e:
@@ -786,6 +857,78 @@ TL;DR:"""
         
         except Exception as e:
             logger.error(f"Failed to log accepted answer: {str(e)}")
+    
+    def _save_query_log(self, message_id: str, user_query: str, final_response: str):
+        """
+        Save the query log to a JSON file in the query_logs directory.
+        
+        Args:
+            message_id: Discord message ID
+            user_query: The user's query
+            final_response: The final response from the bot
+        """
+        try:
+            # Get tracking data from agent
+            agent_tracking = self.agent.get_tracking_data()
+            
+            # Combine all logs (discord bot + agent) and sort by timestamp for chronological order
+            all_logs = self.current_query_log + agent_tracking["call_sequence"]
+            all_logs.sort(key=lambda x: x.get("timestamp", 0))
+            
+            # Merge token stats from agent and discord bot
+            merged_token_stats = dict(self.current_query_token_stats)
+            for model, stats in agent_tracking["token_stats"].items():
+                if model not in merged_token_stats:
+                    merged_token_stats[model] = {
+                        "total_input_tokens": 0,
+                        "total_output_tokens": 0,
+                        "total_calls": 0
+                    }
+                merged_token_stats[model]["total_input_tokens"] += stats["total_input_tokens"]
+                merged_token_stats[model]["total_output_tokens"] += stats["total_output_tokens"]
+                merged_token_stats[model]["total_calls"] += stats["total_calls"]
+            
+            # Create the log entry
+            log_entry = {
+                "message_id": message_id,
+                "timestamp": datetime.now().isoformat(),
+                "user_query": user_query,
+                "final_response": final_response[:1000] + "..." if len(final_response) > 1000 else final_response,
+                "call_sequence": all_logs,
+                "token_stats_by_model": merged_token_stats
+            }
+            
+            # Save to file with timestamp in filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"query_{message_id}_{timestamp}.json"
+            filepath = self.QUERY_LOGS_DIR / filename
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(log_entry, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Query log saved to {filepath}")
+            print(f"{Fore.CYAN}[QUERY LOG] Saved to {filename}{Style.RESET_ALL}")
+            
+            # Print token statistics summary
+            print(f"{Fore.CYAN}[TOKEN STATS]{Style.RESET_ALL}")
+            for model, stats in merged_token_stats.items():
+                print(f"  Model: {model}")
+                print(f"    Calls: {stats['total_calls']}")
+                print(f"    Input tokens: {stats['total_input_tokens']}")
+                print(f"    Output tokens: {stats['total_output_tokens']}")
+                print(f"    Total tokens: {stats['total_input_tokens'] + stats['total_output_tokens']}")
+        
+        except Exception as e:
+            logger.error(f"Failed to save query log: {str(e)}")
+    
+    def _reset_query_tracking(self):
+        """
+        Reset tracking for a new query.
+        Should be called at the start of processing each user message.
+        """
+        self.current_query_log = []
+        self.current_query_token_stats = {}
+        self.agent.reset_tracking()
     
     def run(self):
         """Start the Discord bot."""
