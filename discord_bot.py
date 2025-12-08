@@ -580,7 +580,7 @@ JSON Response:"""
             response: The full response text
             
         Returns:
-            Response with TL;DR prepended if applicable
+            Response with TL;DR appended at the end if applicable
         """
         # Add TL;DR for responses longer than 300 characters
         if len(response) > 300:
@@ -592,8 +592,8 @@ TL;DR:"""
             
             try:
                 tldr = self._call_llm(prompt)
-                # Format the response with TL;DR
-                return f"**TL;DR:** {tldr}\n\n---\n\n{response}"
+                # Format the response with TL;DR at the end
+                return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
             except Exception as e:
                 print(f"TL;DR generation failed: {e}")
                 return response
