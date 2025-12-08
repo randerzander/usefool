@@ -13,6 +13,12 @@ import requests
 import json
 import logging
 import time
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    # fcntl is not available on Windows
+    HAS_FCNTL = False
 from datetime import datetime
 from pathlib import Path
 from react_agent import ReActAgent
@@ -504,6 +510,16 @@ TL;DR:"""
         
         return response
     
+    def _lock_file(self, f):
+        """Lock a file for exclusive access (cross-platform)."""
+        if HAS_FCNTL:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    
+    def _unlock_file(self, f):
+        """Unlock a file (cross-platform)."""
+        if HAS_FCNTL:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    
     async def _log_eval_question(self, message: discord.Message, user: discord.User):
         """
         Log a user question to the evaluation file when tagged with 🧪.
@@ -535,9 +551,15 @@ TL;DR:"""
                 "accepted_answer": None
             }
             
-            # Append to eval file
+            # Append to eval file with file locking for thread safety
             with open(self.EVAL_FILE, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(eval_entry) + '\n')
+                try:
+                    # Acquire exclusive lock
+                    self._lock_file(f)
+                    f.write(json.dumps(eval_entry) + '\n')
+                finally:
+                    # Release lock
+                    self._unlock_file(f)
             
             print(f"{Fore.CYAN}[EVAL] Question logged: {question[:50]}...{Style.RESET_ALL}")
             logger.info(f"Eval question logged from {message.author.display_name}: {question}")
@@ -575,35 +597,47 @@ TL;DR:"""
             
             original_msg_id = str(original_msg.id)
             
-            # Read existing eval entries
+            # Read existing eval entries with file locking
             if not self.EVAL_FILE.exists():
                 return
             
             entries = []
             updated = False
             
-            with open(self.EVAL_FILE, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.strip():
-                        entry = json.loads(line)
-                        # Update the entry if it matches the original message
-                        if entry.get("message_id") == original_msg_id:
-                            entry["accepted_answer"] = answer
-                            entry["accepted_by"] = user.display_name
-                            entry["accepted_by_id"] = str(user.id)
-                            entry["accepted_at"] = datetime.now().isoformat()
-                            updated = True
-                            print(f"{Fore.CYAN}[EVAL] Answer accepted for question: {entry['question'][:50]}...{Style.RESET_ALL}")
-                            logger.info(f"Accepted answer logged for message {original_msg_id}")
-                        entries.append(entry)
+            # Read and update entries with shared lock
+            with open(self.EVAL_FILE, 'r+', encoding='utf-8') as f:
+                try:
+                    # Acquire exclusive lock for read-modify-write
+                    self._lock_file(f)
+                    
+                    # Read all entries
+                    for line in f:
+                        if line.strip():
+                            entry = json.loads(line)
+                            # Update the entry if it matches the original message
+                            if entry.get("message_id") == original_msg_id:
+                                entry["accepted_answer"] = answer
+                                entry["accepted_by"] = user.display_name
+                                entry["accepted_by_id"] = str(user.id)
+                                entry["accepted_at"] = datetime.now().isoformat()
+                                updated = True
+                                print(f"{Fore.CYAN}[EVAL] Answer accepted for question: {entry['question'][:50]}...{Style.RESET_ALL}")
+                                logger.info(f"Accepted answer logged for message {original_msg_id}")
+                            entries.append(entry)
+                    
+                    # Write back all entries if we updated one
+                    if updated:
+                        # Truncate and rewrite
+                        f.seek(0)
+                        f.truncate()
+                        for entry in entries:
+                            f.write(json.dumps(entry) + '\n')
+                finally:
+                    # Release lock
+                    self._unlock_file(f)
             
-            # Write back all entries if we updated one
+            # Add confirmation reaction if update was successful
             if updated:
-                with open(self.EVAL_FILE, 'w', encoding='utf-8') as f:
-                    for entry in entries:
-                        f.write(json.dumps(entry) + '\n')
-                
-                # Add confirmation reaction
                 try:
                     await message.add_reaction("💚")
                 except (discord.Forbidden, discord.NotFound, discord.HTTPException):
