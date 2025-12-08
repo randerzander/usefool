@@ -44,6 +44,7 @@ def load_config():
         logger.warning(f"Config file not found at {config_path}, using defaults")
         return {
             "auto_restart": True,
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
             "default_model": "amazon/nova-2-lite-v1:free",
             "intent_detection_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -54,6 +55,7 @@ def load_config():
         logger.error(f"Error loading config: {e}, using defaults")
         return {
             "auto_restart": True,
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
             "default_model": "amazon/nova-2-lite-v1:free",
             "intent_detection_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -83,7 +85,9 @@ class ReActDiscordBot:
         """
         self.token = token
         self.api_key = api_key
-        self.agent = ReActAgent(api_key)
+        # Get base_url from config, default to OpenRouter
+        base_url = CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        self.agent = ReActAgent(api_key, base_url=base_url)
         
         # Ensure data directory exists
         self.DATA_DIR.mkdir(exist_ok=True)
@@ -507,7 +511,8 @@ class ReActDiscordBot:
                     image_url=image_url,
                     api_key=self.api_key,
                     user_query=user_query,
-                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
+                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free"),
+                    base_url=MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
                 )
                 return result
             except Exception as e:
@@ -571,12 +576,15 @@ class ReActDiscordBot:
         # Calculate input tokens
         input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
         
+        # Get base_url from config
+        base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        
         # Log LLM call
         logger.info(f"LLM call started - Model: {model_to_use}, Input tokens: {input_tokens}")
         start_time = time.time()
         
         response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            base_url,
             headers=headers,
             json=data,
             timeout=timeout
