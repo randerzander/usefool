@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple ReAct Agent with DuckDuckGo search and URL scraping capabilities.
+Simple ReAct Agent with DuckDuckGo search, URL scraping, and GitHub issue creation capabilities.
 Uses OpenRouter API with deepseek-r1t2-chimera:free model.
 """
 
