@@ -70,14 +70,15 @@ def scrape_url(url: str) -> str:
         return f"Error scraping URL: {str(e)}"
 
 
-def write_code(prompt: str, api_key: str) -> str:
+def write_code(prompt: str, api_key: str, model: str = "kwaipilot/kat-coder-pro:free") -> str:
     """
-    Write code using kwaipilot/kat-coder-pro:free model.
+    Write code using an AI code generation model.
     If the response contains multiple files, saves them to a local directory.
     
     Args:
         prompt: The code writing prompt
         api_key: OpenRouter API key
+        model: Model to use for code generation (default: kwaipilot/kat-coder-pro:free)
         
     Returns:
         The generated code or a message indicating where the code was saved
@@ -89,7 +90,7 @@ def write_code(prompt: str, api_key: str) -> str:
         }
         
         data = {
-            "model": "kwaipilot/kat-coder-pro:free",
+            "model": model,
             "messages": [
                 {"role": "user", "content": prompt}
             ]
@@ -195,16 +196,18 @@ class ReActAgent:
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
     API_TIMEOUT = 30  # Timeout for API calls in seconds
     
-    def __init__(self, api_key: str, model: str = "tngtech/deepseek-r1t2-chimera:free"):
+    def __init__(self, api_key: str, model: str = "tngtech/deepseek-r1t2-chimera:free", code_model: str = "kwaipilot/kat-coder-pro:free"):
         """
         Initialize the ReAct agent.
         
         Args:
             api_key: OpenRouter API key
             model: Model to use for reasoning
+            code_model: Model to use for code generation (default: kwaipilot/kat-coder-pro:free)
         """
         self.api_key = api_key
         self.model = model
+        self.code_model = code_model
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
         
         # Define available tools
@@ -220,7 +223,7 @@ class ReActAgent:
                 "parameters": ["url"]
             },
             "write_code": {
-                "function": lambda prompt: write_code(prompt, self.api_key),
+                "function": lambda prompt: write_code(prompt, self.api_key, self.code_model),
                 "description": "Write code based on a prompt using an AI code generation model. Input should be a detailed description of the code to write. If multiple files are generated, they will be saved to a local directory.",
                 "parameters": ["prompt"]
             }

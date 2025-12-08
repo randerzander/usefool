@@ -81,6 +81,24 @@ answer = agent.run("What is the latest news about artificial intelligence?", ver
 print(answer)
 ```
 
+### Using a Custom Code Generation Model
+
+```python
+from react_agent import ReActAgent
+import os
+
+# Initialize the agent with a custom code generation model
+api_key = os.getenv("OPENROUTER_API_KEY")
+agent = ReActAgent(
+    api_key,
+    code_model="anthropic/claude-3.5-sonnet"  # Use a different model for code generation
+)
+
+# Ask the agent to write code
+answer = agent.run("Write a Python function to calculate fibonacci numbers", verbose=True)
+print(answer)
+```
+
 ### Discord Bot
 
 Run the agent as a Discord bot that responds to mentions:
@@ -154,7 +172,7 @@ The ReAct agent follows a thought-action-observation loop:
 - `write_code`: Write code using AI code generation
   - Input: A detailed description of the code to write
   - Output: Generated code. If multiple files are detected, they are saved to a timestamped directory (e.g., `generated_code_20231208_153045`)
-  - Model: Uses `kwaipilot/kat-coder-pro:free` for code generation
+  - Model: Uses `kwaipilot/kat-coder-pro:free` by default (can be customized via `code_model` parameter when initializing the agent)
 
 ## Example
 

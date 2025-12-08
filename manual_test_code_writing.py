@@ -130,6 +130,9 @@ answer = agent.run(
     verbose=True
 )
 print(answer)
+
+# Or use a custom code generation model:
+# agent = ReActAgent(api_key, code_model="anthropic/claude-3.5-sonnet")
 """
     print(example_code)
     
