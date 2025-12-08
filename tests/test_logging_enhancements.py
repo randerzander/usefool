@@ -231,12 +231,14 @@ def test_discord_bot_query_logging():
             }
         }
         
-        bot._save_query_log("123456", "Test question?", "Test answer")
+        bot._save_query_log("123456", "Test question?", "Test answer", "TestUser")
         
-        # Verify log file was created
-        log_files = list(bot.QUERY_LOGS_DIR.glob("query_*.json"))
+        # Verify log file was created with new naming format (username_timestamp.json)
+        log_files = list(bot.QUERY_LOGS_DIR.glob("*.json"))
         assert len(log_files) == 1, "Should create one log file"
-        print(f"✓ Log file created: {log_files[0].name}")
+        # Check that filename starts with username (TestUser)
+        assert log_files[0].name.startswith("TestUser_"), f"Filename should start with username, got: {log_files[0].name}"
+        print(f"✓ Log file created with username-based naming: {log_files[0].name}")
         
         # Test 3: Verify log file contents
         print("\nTest 3: Verify log file contents")
@@ -245,6 +247,8 @@ def test_discord_bot_query_logging():
         
         assert "message_id" in log_data, "Should have message_id"
         assert log_data["message_id"] == "123456", "Should have correct message_id"
+        assert "username" in log_data, "Should have username"
+        assert log_data["username"] == "TestUser", "Should have correct username"
         assert "timestamp" in log_data, "Should have timestamp"
         assert "user_query" in log_data, "Should have user_query"
         assert "final_response" in log_data, "Should have final_response"
@@ -264,6 +268,7 @@ def test_discord_bot_query_logging():
         
         print("✓ Log file contents are correct")
         print(f"  - Message ID: {log_data['message_id']}")
+        print(f"  - Username: {log_data['username']}")
         print(f"  - Call sequence length: {len(log_data['call_sequence'])}")
         print(f"  - Models tracked: {list(log_data['token_stats_by_model'].keys())}")
     

@@ -323,7 +323,7 @@ class ReActDiscordBot:
                         await message.channel.send(answer)
                     
                     # Save query log after successful response
-                    self._save_query_log(str(message.id), question, complete_answer)
+                    self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
                 
                 except Exception as e:
                     # Unregister channel history tool in case of error
@@ -858,7 +858,7 @@ TL;DR:"""
         except Exception as e:
             logger.error(f"Failed to log accepted answer: {str(e)}")
     
-    def _save_query_log(self, message_id: str, user_query: str, final_response: str):
+    def _save_query_log(self, message_id: str, user_query: str, final_response: str, username: str):
         """
         Save the query log to a JSON file in the query_logs directory.
         
@@ -866,6 +866,7 @@ TL;DR:"""
             message_id: Discord message ID
             user_query: The user's query
             final_response: The final response from the bot
+            username: Username of the person who submitted the query
         """
         try:
             # Get tracking data from agent
@@ -891,6 +892,7 @@ TL;DR:"""
             # Create the log entry
             log_entry = {
                 "message_id": message_id,
+                "username": username,
                 "timestamp": datetime.now().isoformat(),
                 "user_query": user_query,
                 "final_response": final_response[:1000] + "..." if len(final_response) > 1000 else final_response,
@@ -898,9 +900,12 @@ TL;DR:"""
                 "token_stats_by_model": merged_token_stats
             }
             
-            # Save to file with timestamp in filename
+            # Save to file with username and timestamp in filename
+            # Format: username_YYYYMMDD_HHMMSS.json
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"query_{message_id}_{timestamp}.json"
+            # Sanitize username to be filesystem-safe (replace spaces and special chars with underscore)
+            safe_username = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in username)
+            filename = f"{safe_username}_{timestamp}.json"
             filepath = self.QUERY_LOGS_DIR / filename
             
             with open(filepath, 'w', encoding='utf-8') as f:
