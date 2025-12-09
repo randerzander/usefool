@@ -20,10 +20,10 @@ def verify_tldr_fix():
     print("  3. Code at line 754 (old) adds '**TL;DR:** {tldr}'")
     print("  4. Result: '**TL;DR:** TL;DR: <summary>'")
     
-    print("\n✅ Solution (lines 758-761):")
+    print("\n✅ Solution (lines 758-762):")
     print("  1. Strip whitespace from LLM response")
     print("  2. Check if response starts with 'tl;dr:' (case insensitive)")
-    print("  3. If yes, remove the first 6 characters ('TL;DR:') and strip again")
+    print("  3. If yes, remove the prefix using len('tl;dr:') and strip again")
     print("  4. Then format with '**TL;DR:** {cleaned_tldr}'")
     
     print("\n🧪 Test Cases:")

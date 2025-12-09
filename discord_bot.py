@@ -755,7 +755,8 @@ TL;DR:"""
             
             try:
                 tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
-                # Strip any leading "TL;DR:" from the response to avoid duplication (case insensitive)
+                # Strip any leading "TL;DR:" from the response to avoid duplication
+                # Use lowercase constant for case-insensitive comparison via .lower().startswith()
                 tldr = tldr.strip()
                 tldr_prefix = "tl;dr:"
                 if tldr.lower().startswith(tldr_prefix):
