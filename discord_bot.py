@@ -755,11 +755,11 @@ TL;DR:"""
             
             try:
                 tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
-                # Strip any leading "TL;DR:" from the response to avoid duplication
+                # Strip any leading "TL;DR:" from the response to avoid duplication (case insensitive)
                 tldr = tldr.strip()
                 tldr_prefix = "tl;dr:"
                 if tldr.lower().startswith(tldr_prefix):
-                    tldr = tldr[len(tldr_prefix):].strip()  # Remove "TL;DR:" prefix (case insensitive match)
+                    tldr = tldr[len(tldr_prefix):].strip()  # Remove prefix after case-insensitive match
                 # Format the response with TL;DR at the end
                 return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
             except Exception as e:

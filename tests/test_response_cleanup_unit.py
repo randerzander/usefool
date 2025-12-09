@@ -155,8 +155,9 @@ def test_example_output():
     # Simulate TL;DR
     tldr_input = "TL;DR: The requirements.txt lists recent versions..."
     tldr_stripped = tldr_input.strip()
-    if tldr_stripped.lower().startswith("tl;dr:"):
-        tldr_stripped = tldr_stripped[6:].strip()
+    tldr_prefix = "tl;dr:"
+    if tldr_stripped.lower().startswith(tldr_prefix):
+        tldr_stripped = tldr_stripped[len(tldr_prefix):].strip()
     print(f"TL;DR: {tldr_stripped}")
     
     # Simulate metadata
