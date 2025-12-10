@@ -7,8 +7,8 @@ Contains logging configuration, formatters, and common constants.
 import logging
 from colorama import Fore, Style, init
 
-# Initialize colorama for colored output
-init(autoreset=True)
+# Initialize colorama for colored output (strip=False to always show colors)
+init(autoreset=True, strip=False)
 
 # Token calculation constant
 CHARS_PER_TOKEN = 4.5
@@ -39,19 +39,25 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_logging(level=logging.INFO, format_string='%(asctime)s - %(name)s - %(levelname)s - %(message)s'):
     """
-    Configure logging with colored formatter.
+    Configure logging with colored formatter for the root logger.
     
     Args:
         level: Logging level (default: logging.INFO)
         format_string: Log message format string
     
     Returns:
-        Configured logger instance
+        Root logger instance
     """
+    # Get root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    
+    # Remove existing handlers to avoid duplicates
+    root_logger.handlers.clear()
+    
+    # Add colored handler
     handler = logging.StreamHandler()
     handler.setFormatter(ColoredFormatter(format_string))
-    logging.basicConfig(
-        level=level,
-        handlers=[handler]
-    )
-    return logging.getLogger(__name__)
+    root_logger.addHandler(handler)
+    
+    return root_logger

@@ -30,7 +30,8 @@ from colorama import Fore, Style
 from utils import setup_logging, CHARS_PER_TOKEN
 
 # Configure logging with colored formatter
-logger = setup_logging()
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 # Load bot configuration
@@ -755,12 +756,18 @@ TL;DR:"""
             
             try:
                 tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
-                # Strip any leading "TL;DR:" from the response to avoid duplication
-                # Use lowercase constant for case-insensitive comparison via .lower().startswith()
+                # Strip any leading "TL;DR:" or "TLDR:" from the response to avoid duplication
+                # Handle multiple occurrences (e.g., "TL;DR: TL;DR: text")
                 tldr = tldr.strip()
-                tldr_prefix = "tl;dr:"
-                if tldr.lower().startswith(tldr_prefix):
-                    tldr = tldr[len(tldr_prefix):].strip()  # Remove prefix after case-insensitive match
+                while True:
+                    stripped = False
+                    for prefix in ["tl;dr:", "tldr:"]:
+                        if tldr.lower().startswith(prefix):
+                            tldr = tldr[len(prefix):].strip()
+                            stripped = True
+                            break
+                    if not stripped:
+                        break
                 # Format the response with TL;DR at the end
                 return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
             except Exception as e:

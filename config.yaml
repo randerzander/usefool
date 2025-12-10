@@ -17,7 +17,7 @@ default_model: "amazon/nova-2-lite-v1:free"
 intent_detection_model: "amazon/nova-2-lite-v1:free"
 
 # Model for image captioning with vision language model
-image_caption_model: "nvidia/nemotron-nano-12b-v2-vl:free"
+image_caption_model: "amazon/nova-2-lite-v1:free"
 
 # Model for generating concise responses
 conciseness_model: "amazon/nova-2-lite-v1:free"

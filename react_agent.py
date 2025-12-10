@@ -21,7 +21,8 @@ from colorama import Fore, Style
 from utils import setup_logging, CHARS_PER_TOKEN
 
 # Configure logging with colored formatter
-logger = setup_logging()
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 # Load model configuration
