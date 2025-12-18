@@ -115,6 +115,101 @@ class ReActDiscordBot:
             print(f"Bot is ready to answer questions!")
             print(f"Invite link: https://discord.com/api/oauth2/authorize?client_id={self.client.user.id}&permissions=2048&scope=bot")
         
+        async def translate_user_mentions(text: str, guild) -> str:
+            """
+            Translate Discord user mentions from <@USER_ID> format to @username.
+            
+            Args:
+                text: The text containing potential user mentions
+                guild: The Discord guild/server object
+                
+            Returns:
+                Text with user IDs replaced by usernames
+            """
+            import re
+            
+            # Pattern to match Discord user mentions: <@USER_ID> or <@!USER_ID>
+            pattern = r'<@!?(\d+)>'
+            
+            async def replace_mention(match):
+                user_id = int(match.group(1))
+                try:
+                    # Try to get member from guild
+                    member = guild.get_member(user_id) if guild else None
+                    if not member:
+                        # Try fetching if not in cache
+                        member = await guild.fetch_member(user_id) if guild else None
+                    
+                    if member:
+                        return f"@{member.display_name}"
+                    else:
+                        # Fallback to user ID if member not found
+                        return f"<@{user_id}>"
+                except:
+                    return match.group(0)
+            
+            # Find all matches and replace them
+            matches = re.finditer(pattern, text)
+            result = text
+            for match in reversed(list(matches)):  # Reverse to maintain positions
+                replacement = await replace_mention(match)
+                result = result[:match.start()] + replacement + result[match.end():]
+            
+            return result
+        
+        async def convert_usernames_to_mentions(text: str, guild) -> str:
+            """
+            Convert @username references back to Discord mention format <@USER_ID>.
+            
+            Args:
+                text: The text containing @username references
+                guild: The Discord guild/server object
+                
+            Returns:
+                Text with @usernames replaced by Discord mentions
+            """
+            import re
+            
+            if not guild:
+                return text
+            
+            # Pattern to match @username (but not Discord mentions which are already <@USER_ID>)
+            # Look for @ followed by word characters, but not already in angle brackets
+            pattern = r'(?<![<])@([a-zA-Z0-9_]+)(?![>])'
+            
+            async def replace_username(match):
+                username = match.group(1)
+                try:
+                    # Try to find member by display name or username
+                    member = None
+                    for m in guild.members:
+                        if m.display_name.lower() == username.lower() or m.name.lower() == username.lower():
+                            member = m
+                            break
+                    
+                    if member:
+                        logger.info(f"Converting @{username} to <@{member.id}>")
+                        return f"<@{member.id}>"
+                    else:
+                        # Keep original if member not found
+                        logger.warning(f"User @{username} not found in guild members")
+                        return match.group(0)
+                except Exception as e:
+                    logger.error(f"Error converting @{username}: {e}")
+                    return match.group(0)
+            
+            # Find all matches and replace them
+            matches = list(re.finditer(pattern, text))
+            if matches:
+                logger.info(f"Found {len(matches)} @username mentions to convert")
+            
+            result = text
+            for match in reversed(matches):  # Reverse to maintain positions
+                replacement = await replace_username(match)
+                result = result[:match.start()] + replacement + result[match.end():]
+            
+            return result
+        
         async def get_reply_chain(message) -> tuple[str, list[str]]:
             """
             Get the full reply chain context for a message.
@@ -169,7 +264,10 @@ class ReActDiscordBot:
             
             reply_text = ""
             if chain:
-                reply_text = "Previous conversation context:\n" + "\n".join(chain) + "\n\n"
+                reply_chain_str = "\n".join(chain)
+                # Translate user mentions in the reply chain
+                reply_chain_str = await translate_user_mentions(reply_chain_str, message.guild)
+                reply_text = "Previous conversation context:\n" + reply_chain_str + "\n\n"
             
             return reply_text, reply_image_urls
         
@@ -182,6 +280,9 @@ class ReActDiscordBot:
             # Only respond to messages that mention the bot
             if self.client.user.mentioned_in(message):
                 question = self._remove_bot_mention(message.content)
+                
+                # Translate user mentions from <@USER_ID> to @username
+                question = await translate_user_mentions(question, message.guild)
                 
                 # Check for image attachments
                 image_urls = self._extract_image_urls(message)
@@ -257,8 +358,24 @@ class ReActDiscordBot:
                     if image_urls:
                         self._unregister_image_caption_tool()
                     
-                    # Log the final response in red
-                    print(f"{Fore.RED}[FINAL RESPONSE] {answer[:100]}...{Style.RESET_ALL}" if len(answer) > 100 else f"{Fore.RED}[FINAL RESPONSE] {answer}{Style.RESET_ALL}")
+                    # Log the final response in red with character count
+                    answer_length = len(answer)
+                    print(f"{Fore.RED}[FINAL RESPONSE] ({answer_length} chars) {answer[:100]}...{Style.RESET_ALL}" if answer_length > 100 else f"{Fore.RED}[FINAL RESPONSE] ({answer_length} chars) {answer}{Style.RESET_ALL}")
+                    
+                    # Process response based on length
+                    if answer_length >= 1500:
+                        # Rewrite concisely + add TL;DR
+                        print(f"{Fore.YELLOW}[CONDENSING] Response is {answer_length} chars, rewriting concisely...{Style.RESET_ALL}")
+                        condensed = await self._condense_response(answer)
+                        tldr = await self._generate_tldr(answer)
+                        answer = f"{tldr}\n\n{condensed}"
+                        print(f"{Fore.YELLOW}[CONDENSED] {answer_length} → {len(answer)} chars{Style.RESET_ALL}")
+                    elif answer_length >= 750:
+                        # Add TL;DR only
+                        print(f"{Fore.YELLOW}[ADDING TLDR] Response is {answer_length} chars, adding TL;DR...{Style.RESET_ALL}")
+                        tldr = await self._generate_tldr(answer)
+                        answer = f"{tldr}\n\n{answer}"
+                        print(f"{Fore.YELLOW}[TLDR ADDED] {answer_length} → {len(answer)} chars{Style.RESET_ALL}")
                     
                     # Remove both hourglass emoji reactions
                     await self._remove_reaction(message, "⏳")
@@ -296,6 +413,10 @@ class ReActDiscordBot:
                     metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out{tool_calls_info} • Time: {round(total_response_time)}s*"
                     complete_answer = answer + metadata
                     
+                    # Convert @username references to Discord mentions before sending
+                    logger.info(f"Converting usernames to mentions in response ({len(complete_answer)} chars)")
+                    complete_answer = await convert_usernames_to_mentions(complete_answer, message.guild)
+                    
                     # Discord has a 2000 character limit for messages - split if needed
                     for chunk in self._split_long_message(complete_answer, 1900):
                         await message.channel.send(chunk)
@@ -312,7 +433,13 @@ class ReActDiscordBot:
                     
                     await self._remove_reaction(message, "⏳")
                     await message.channel.send(f"❌ Error: {str(e)}")
+                    
+                    # Log full traceback
+                    import traceback
+                    logger.error(f"Error processing question: {e}")
+                    logger.error(traceback.format_exc())
                     print(f"Error processing question: {e}")
+                    traceback.print_exc()
         
         @self.client.event
         async def on_reaction_add(reaction, user):
@@ -384,7 +511,7 @@ class ReActDiscordBot:
         Returns:
             A function that reads channel history synchronously
         """
-        def read_channel_history(count: str = "10") -> str:
+        def read_channel_history(count: int = 10) -> str:
             """
             Read the last N messages from the Discord channel history.
             This tool helps the bot understand recent conversation context.
@@ -396,30 +523,31 @@ class ReActDiscordBot:
                 Formatted string with recent channel messages
             """
             try:
-                # Parse count, default to 10 if invalid
-                try:
-                    limit = int(count)
-                    if limit < 1 or limit > 50:  # Cap at 50 to avoid overwhelming context
-                        limit = 10
-                except (ValueError, TypeError):
-                    limit = 10
+                # Validate count
+                if not isinstance(count, int):
+                    try:
+                        count = int(count)
+                    except (ValueError, TypeError):
+                        count = 10
                 
-                # This function runs in a separate thread via asyncio.to_thread()
-                # So we need to create a new event loop for this thread
-                # We can't use asyncio.run() directly because it's not available in all contexts
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    result = loop.run_until_complete(
-                        self._read_channel_history_async(channel, current_message_id, limit)
-                    )
-                    return result
-                finally:
-                    loop.close()
-                    # Clear the event loop for this thread to avoid leaks
-                    asyncio.set_event_loop(None)
+                if count < 1 or count > 50:  # Cap at 50 to avoid overwhelming context
+                    count = min(max(count, 1), 50)
+                
+                # Run the async function in the main event loop
+                # This tool is called from asyncio.to_thread(), so we need to schedule
+                # the coroutine back to the main loop
+                future = asyncio.run_coroutine_threadsafe(
+                    self._read_channel_history_async(channel, current_message_id, count),
+                    self.client.loop
+                )
+                # Wait for result with timeout
+                result = future.result(timeout=10)
+                return result
                     
             except Exception as e:
+                logger.error(f"Error in read_channel_history: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 return f"Error reading channel history: {str(e)}"
         
         return read_channel_history
@@ -434,19 +562,41 @@ class ReActDiscordBot:
         """
         tool_function = self._create_channel_history_tool(channel, current_message_id)
         
-        self.agent.tools["read_channel_history"] = {
-            "function": tool_function,
-            "description": "Read the last N messages from the Discord channel history to understand recent conversation context. Input should be a number (default: 10, max: 50).",
-            "parameters": ["count"]
+        # Add to tool_functions dict
+        self.agent.tool_functions["read_channel_history"] = tool_function
+        
+        # Add to tools list in OpenAI format
+        tool_spec = {
+            "type": "function",
+            "function": {
+                "name": "read_channel_history",
+                "description": "Read the last N messages from the Discord channel history to understand recent conversation context",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {
+                            "type": "integer",
+                            "description": "Number of messages to read (default: 10, max: 50)",
+                            "default": 10
+                        }
+                    },
+                    "required": []
+                }
+            }
         }
+        self.agent.tools.append(tool_spec)
     
     def _unregister_channel_history_tool(self):
         """
         Remove the channel history tool from the agent.
         This should be called after processing each message to avoid memory leaks.
         """
-        if "read_channel_history" in self.agent.tools:
-            del self.agent.tools["read_channel_history"]
+        # Remove from tool_functions dict
+        if "read_channel_history" in self.agent.tool_functions:
+            del self.agent.tool_functions["read_channel_history"]
+        
+        # Remove from tools list
+        self.agent.tools = [t for t in self.agent.tools if t["function"]["name"] != "read_channel_history"]
     
     def _create_image_caption_tool(self, user_query: str):
         """
@@ -460,23 +610,30 @@ class ReActDiscordBot:
         """
         def caption_image(image_url: str) -> str:
             """
-            Caption an image using two-round captioning with nemotron VLM.
-            First round gets a basic caption, second round provides detailed analysis
-            based on the user's query.
+            Caption an image using a Vision Language Model.
             
             Args:
                 image_url: URL of the image to caption
                 
             Returns:
-                Detailed caption from two-round analysis
+                Detailed caption from the VLM
             """
             try:
-                result = two_round_image_caption(
+                from react_agent import caption_image_with_vlm
+                
+                # Build prompt with user query if available
+                if user_query:
+                    prompt = f"Based on the user's query: '{user_query}'\n\nDescribe this image in detail, focusing on aspects relevant to the user's question."
+                else:
+                    prompt = "Describe this image in detail. What do you see?"
+                
+                # Use single-round captioning
+                result = caption_image_with_vlm(
                     image_url=image_url,
                     api_key=self.api_key,
-                    user_query=user_query,
-                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free"),
-                    base_url=MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+                    prompt=prompt,
+                    model=MODEL_CONFIG.get("image_caption_model", "amazon/nova-lite-v1"),
+                    base_url=None  # Let function auto-select OpenRouter if VLM model differs
                 )
                 return result
             except Exception as e:
@@ -493,19 +650,40 @@ class ReActDiscordBot:
         """
         tool_function = self._create_image_caption_tool(user_query)
         
-        self.agent.tools["caption_image"] = {
-            "function": tool_function,
-            "description": "Caption an image using two-round analysis with a Vision Language Model. First round provides a basic description, second round gives detailed analysis based on the user's query. Input should be an image URL.",
-            "parameters": ["image_url"]
+        # Add to tool_functions dict
+        self.agent.tool_functions["caption_image"] = tool_function
+        
+        # Add to tools list in OpenAI format
+        tool_spec = {
+            "type": "function",
+            "function": {
+                "name": "caption_image",
+                "description": "Caption and analyze an image using a Vision Language Model. Provides detailed description based on the user's query context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_url": {
+                            "type": "string",
+                            "description": "The URL of the image to caption"
+                        }
+                    },
+                    "required": ["image_url"]
+                }
+            }
         }
+        self.agent.tools.append(tool_spec)
     
     def _unregister_image_caption_tool(self):
         """
         Remove the image caption tool from the agent.
         This should be called after processing each message to avoid memory leaks.
         """
-        if "caption_image" in self.agent.tools:
-            del self.agent.tools["caption_image"]
+        # Remove from tool_functions dict
+        if "caption_image" in self.agent.tool_functions:
+            del self.agent.tool_functions["caption_image"]
+        
+        # Remove from tools list
+        self.agent.tools = [t for t in self.agent.tools if t["function"]["name"] != "caption_image"]
     
     def _split_long_message(self, text: str, limit: int = 1900):
         chunks = []
@@ -517,6 +695,50 @@ class ReActDiscordBot:
             remaining = remaining[split_pos:].strip()
         chunks.append(remaining)
         return chunks
+
+    async def _generate_tldr(self, text: str) -> str:
+        """
+        Generate a TL;DR summary of the given text.
+        
+        Args:
+            text: The text to summarize
+            
+        Returns:
+            A concise TL;DR summary (the LLM will include the "TL;DR:" prefix)
+        """
+        prompt = f"""You are Usefool. Provide a very brief summary (1-2 sentences) of your response below. Start with "TL;DR: " and write in first person (you are Usefool responding):
+
+{text}"""
+        
+        try:
+            summary = await asyncio.to_thread(self._call_llm, prompt, 30)
+            return summary.strip()
+        except Exception as e:
+            logger.error(f"Error generating TL;DR: {e}")
+            return "**TL;DR:** Summary unavailable"
+    
+    async def _condense_response(self, text: str) -> str:
+        """
+        Rewrite a response more concisely while keeping key information.
+        
+        Args:
+            text: The original response text
+            
+        Returns:
+            A condensed version of the response
+        """
+        prompt = f"""You are Usefool. Please rewrite your response below more concisely. Keep all important information but remove redundancy and wordiness. Aim for about 50-60% of the original length. Write in first person (you are Usefool responding):
+
+{text}
+
+Condensed version:"""
+        
+        try:
+            condensed = await asyncio.to_thread(self._call_llm, prompt, 60)
+            return condensed.strip()
+        except Exception as e:
+            logger.error(f"Error condensing response: {e}")
+            return text  # Return original if condensing fails
 
     async def _remove_hourglasses(self, message):
         await self._remove_reaction(message, "\u23f3")
@@ -551,6 +773,18 @@ class ReActDiscordBot:
                 {"role": "user", "content": prompt}
             ]
         }
+        
+        # Add optional parameters if configured
+        if "temperature" in MODEL_CONFIG:
+            data["temperature"] = MODEL_CONFIG["temperature"]
+        if "top_p" in MODEL_CONFIG:
+            data["top_p"] = MODEL_CONFIG["top_p"]
+        if "max_tokens" in MODEL_CONFIG:
+            data["max_tokens"] = MODEL_CONFIG["max_tokens"]
+        
+        # Add thinking mode for Nemotron models if enabled
+        if MODEL_CONFIG.get("enable_thinking", False):
+            data["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
         
         # Calculate input tokens
         input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
@@ -780,7 +1014,7 @@ class ReActDiscordBot:
                 json.dump(log_entry, f, indent=2, ensure_ascii=False)
             
             logger.info(f"Query log saved to {filepath}")
-            print(f"{Fore.CYAN}[QUERY LOG] Saved to {filename}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}[QUERY LOG] Saved to {filepath}{Style.RESET_ALL}")
             
             # Print token statistics summary
             for model, stats in merged_token_stats.items():
@@ -998,10 +1232,11 @@ def main():
         print("ERROR: .bot_token is empty")
         return
     
-    # Get OpenRouter API key from environment
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        print("ERROR: OPENROUTER_API_KEY environment variable not set")
+    # Get API key from environment variable specified in config
+    api_key_env = CONFIG.get("api_key_env", "OPENROUTER_API_KEY")
+    api_key = os.getenv(api_key_env) if api_key_env else None
+    if not api_key and api_key_env:
+        print(f"ERROR: {api_key_env} environment variable not set")
         return
     
     # Check if auto-restart is enabled in config

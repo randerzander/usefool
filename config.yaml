@@ -6,21 +6,30 @@
 # Set to false to disable automatic restart on code changes
 auto_restart: true
 
-# Base URL for OpenAI-compatible API (default: OpenRouter)
-# You can change this to use a local LLM or other OpenAI-compatible endpoint
-base_url: "https://openrouter.ai/api/v1/chat/completions"
+# Base URL for OpenAI-compatible API
+# NVIDIA API:
+# base_url: "https://integrate.api.nvidia.com/v1/chat/completions"
+# Local llama-cpp server:
+base_url: "http://localhost:8080/v1/chat/completions"
+
+# Environment variable name containing the API key
+# Set to null or omit for services that don't require authentication
+api_key_env: "OPENROUTER_API_KEY"
 
 # Default model for main reasoning and agent operations
-default_model: "amazon/nova-2-lite-v1:free"
+default_model: "nvidia/nemotron-3-nano-30b-a3b"
 
-# Model for intent detection (sarcastic vs serious)
-intent_detection_model: "amazon/nova-2-lite-v1:free"
+# Model parameters (optional - comment out to use model defaults)
+# temperature: 1
+# top_p: 1
+# max_tokens: 16384
+
+# Enable thinking mode for Nemotron models (adds chat template kwargs)
+# enable_thinking: true
+
+# System prompt for the agent
+system_prompt: "You are Usefool, a sloppy clanker. Use the available tools and inject some punny witticism. Never mention puns. Never thank the user or offer additional help. If there are errors, always reply with the full trace"
 
 # Model for image captioning with vision language model
-image_caption_model: "amazon/nova-2-lite-v1:free"
-
-# Model for generating concise responses
-conciseness_model: "amazon/nova-2-lite-v1:free"
-
-# Model for generating TL;DR summaries
-tldr_model: "amazon/nova-2-lite-v1:free"
+# Available models: amazon/nova-lite-v1, qwen/qwen-2-vl-72b-instruct, etc.
+image_caption_model: "nvidia/nemotron-nano-12b-v2-vl:free"

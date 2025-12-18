@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Simple ReAct Agent with DuckDuckGo search and URL scraping capabilities.
-Uses OpenRouter API with configurable models.
+Agent with web search and URL scraping capabilities using OpenAI tools API.
+Supports configurable LLM backends and models.
 """
 
 import os
 import json
-import re
 import logging
 import time
 import base64
@@ -14,8 +13,8 @@ import yaml
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from duckduckgo_search import DDGS
 from pyreadability import Readability
+from bs4 import BeautifulSoup
 import html2text
 import requests
 from colorama import Fore, Style
@@ -46,22 +45,67 @@ MODEL_CONFIG = load_model_config()
 
 
 # Tool implementations
-def duckduckgo_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
+def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
     """
-    Search DuckDuckGo and return results.
+    Search using local SearXNG instance and return results.
     
     Args:
         query: Search query string
         max_results: Maximum number of results to return
         
     Returns:
-        List of dictionaries containing title, href, and body
+        List of dictionaries containing index, title, url, and description
     """
+    logger.info(f"SearXNG search started - Query: '{query}', Max results: {max_results}")
     try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-            return results
+        from bs4 import BeautifulSoup
+        
+        # Make request to SearXNG
+        url = f"http://localhost:8081/search?q={query}"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        logger.debug(f"SearXNG response - Status: {response.status_code}, Content length: {len(response.text)}")
+        
+        # Parse HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find all result articles
+        articles = soup.find_all('article', class_='result')
+        
+        results = []
+        for i, article in enumerate(articles[:max_results], 1):
+            # Extract title
+            h3 = article.find('h3')
+            title_link = h3.find('a') if h3 else None
+            title = title_link.get_text(strip=True) if title_link else 'N/A'
+            
+            # Extract URL
+            url_link = article.find('a', class_='url_header')
+            url = url_link.get('href') if url_link else 'N/A'
+            
+            # Extract description
+            content_p = article.find('p', class_='content')
+            description = content_p.get_text(strip=True) if content_p else 'N/A'
+            
+            results.append({
+                'index': i,
+                'title': title,
+                'href': url,
+                'body': description
+            })
+        
+        logger.info(f"SearXNG search completed - Retrieved {len(results)} results")
+        
+        if results:
+            logger.debug(f"First result: {results[0].get('title', 'N/A')[:100]}")
+        else:
+            logger.warning("SearXNG search returned 0 results")
+        
+        return results
+        
     except Exception as e:
+        logger.error(f"SearXNG search failed: {str(e)}")
         return [{"error": f"Search failed: {str(e)}"}]
 
 
@@ -75,11 +119,13 @@ def scrape_url(url: str) -> str:
     Returns:
         Markdown content extracted from the page
     """
+    logger.info(f"Scraping URL: {url}")
     try:
         response = requests.get(url, timeout=10, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         })
         response.raise_for_status()
+        logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
         
         # Use pyreadability to parse HTML and extract main content
         reader = Readability(response.text)
@@ -94,9 +140,13 @@ def scrape_url(url: str) -> str:
         # Add title if available
         if result.get('title'):
             markdown_content = f"# {result['title']}\n\n{markdown_content}"
+            logger.info(f"URL scraped successfully - Title: '{result['title'][:100]}', Content: {len(markdown_content)} chars")
+        else:
+            logger.info(f"URL scraped successfully - Content: {len(markdown_content)} chars")
         
         return markdown_content
     except Exception as e:
+        logger.error(f"URL scraping failed for {url}: {str(e)}")
         return f"Error scraping URL: {str(e)}"
 
 
@@ -111,6 +161,7 @@ def read_file(filepath: str) -> str:
     Returns:
         Content of the file or error message
     """
+    logger.info(f"Reading file: {filepath}")
     try:
         # Get the current working directory (fully resolved)
         cwd = Path.cwd().resolve()
@@ -123,32 +174,39 @@ def read_file(filepath: str) -> str:
         try:
             file_path.relative_to(cwd)
         except ValueError:
+            logger.warning(f"Access denied for file outside cwd: {filepath}")
             return f"Error: Access denied. File path '{filepath}' is outside the current working directory."
         
         # Check if file exists
         if not file_path.exists():
+            logger.warning(f"File not found: {filepath}")
             return f"Error: File '{filepath}' not found in current working directory."
         
         # Check if it's a file (not a directory)
         if not file_path.is_file():
+            logger.warning(f"Not a file: {filepath}")
             return f"Error: '{filepath}' is not a file."
         
         # Check file size to avoid reading very large files
         max_size = 1024 * 1024  # 1 MB limit
         file_size = file_path.stat().st_size
         if file_size > max_size:
+            logger.warning(f"File too large: {filepath} ({file_size} bytes)")
             return f"Error: File '{filepath}' is too large ({file_size} bytes). Maximum size is {max_size} bytes (1 MB)."
         
         # Read the file
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+            logger.info(f"File read successfully: {filepath} ({file_size} bytes)")
             return content
         except UnicodeDecodeError:
             # If the file is binary, return an error
+            logger.warning(f"Binary file cannot be read as text: {filepath}")
             return f"Error: File '{filepath}' appears to be a binary file and cannot be read as text."
         
     except Exception as e:
+        logger.error(f"Error reading file {filepath}: {str(e)}")
         return f"Error reading file: {str(e)}"
 
 
@@ -243,9 +301,20 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         if model is None:
             model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
         
-        # Use config default if base_url not specified
+        # Use OpenRouter for VLM if base_url not specified
+        # VLM models are typically on OpenRouter, not local servers
         if base_url is None:
-            base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+            # Check if VLM model is different from default model
+            default_model = MODEL_CONFIG.get("default_model", "")
+            vlm_model = MODEL_CONFIG.get("image_caption_model", "")
+            
+            if vlm_model != default_model:
+                # Different model = likely needs OpenRouter
+                base_url = "https://openrouter.ai/api/v1/chat/completions"
+                logger.info(f"Using OpenRouter for VLM model: {model}")
+            else:
+                # Same model = use config default
+                base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
         # Prepare the API request with image
         headers = {
@@ -274,15 +343,31 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
             ]
         }
         
-        logger.info(f"Captioning image with VLM - Model: {model}")
+        # Add optional parameters if configured
+        if "temperature" in MODEL_CONFIG:
+            data["temperature"] = MODEL_CONFIG["temperature"]
+        if "top_p" in MODEL_CONFIG:
+            data["top_p"] = MODEL_CONFIG["top_p"]
+        if "max_tokens" in MODEL_CONFIG:
+            data["max_tokens"] = MODEL_CONFIG["max_tokens"]
+        
+        # Add thinking mode for Nemotron models if enabled
+        if MODEL_CONFIG.get("enable_thinking", False):
+            data["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
+        
+        logger.info(f"Captioning image with VLM - Model: {model}, Base URL: {base_url}")
         start_time = time.time()
         
         response = requests.post(
             base_url,
             headers=headers,
             json=data,
-            timeout=30
+            timeout=90
         )
+        
+        logger.info(f"VLM API response status: {response.status_code}")
+        if response.status_code != 200:
+            logger.error(f"VLM API error response: {response.text[:500]}")
         response.raise_for_status()
         result = response.json()
         content = result["choices"][0]["message"]["content"].strip()
@@ -322,9 +407,20 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         if model is None:
             model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
         
-        # Use config default if base_url not specified
+        # Use OpenRouter for VLM if base_url not specified
+        # VLM models are typically on OpenRouter, not local servers
         if base_url is None:
-            base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+            # Check if VLM model is different from default model
+            default_model = MODEL_CONFIG.get("default_model", "")
+            vlm_model = MODEL_CONFIG.get("image_caption_model", "")
+            
+            if vlm_model != default_model:
+                # Different model = likely needs OpenRouter
+                base_url = "https://openrouter.ai/api/v1/chat/completions"
+                logger.info(f"Using OpenRouter for VLM model: {model}")
+            else:
+                # Same model = use config default
+                base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
         # First round: Basic caption
         logger.info("Starting first round of image captioning...")
@@ -335,7 +431,11 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         except Exception as e:
             return f"Error in first round of captioning: {str(e)}"
         
-        logger.info(f"First round caption: {first_caption[:100]}...")
+        # Log with full error message if it starts with "Error", otherwise truncate
+        if first_caption.startswith("Error"):
+            logger.info(f"First round caption: {first_caption}")
+        else:
+            logger.info(f"First round caption: {first_caption[:100]}...")
         
         # Second round: Detailed caption based on user query
         logger.info("Starting second round of image captioning with user context...")
@@ -357,7 +457,11 @@ Now, provide additional details about the image that weren't covered in the firs
         except Exception as e:
             return f"Error in second round of captioning: {str(e)}\n\nFirst round result: {first_caption}"
         
-        logger.info(f"Second round caption: {second_caption[:100]}...")
+        # Log with full error message if it starts with "Error", otherwise truncate
+        if second_caption.startswith("Error"):
+            logger.info(f"Second round caption: {second_caption}")
+        else:
+            logger.info(f"Second round caption: {second_caption[:100]}...")
         
         # Combine both captions
         combined = f"Initial Description:\n{first_caption}\n\nDetailed Analysis:\n{second_caption}"
@@ -370,12 +474,13 @@ Now, provide additional details about the image that weren't covered in the firs
 # ReAct Agent implementation
 class ReActAgent:
     """
-    A simple ReAct (Reasoning + Acting) agent that can use tools to answer questions.
+    An agent that can use tools to answer questions via OpenAI tools API.
+    Supports web_search, scrape_url, and read_file tools.
     """
     
     # Constants
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
-    API_TIMEOUT = 30  # Timeout for API calls in seconds
+    API_TIMEOUT = 90  # Timeout for API calls in seconds (3 minutes)
     
     def __init__(self, api_key: str, model: str = None, base_url: str = None):
         """
@@ -390,24 +495,72 @@ class ReActAgent:
         self.model = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         self.api_url = base_url if base_url is not None else MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
-        # Define available tools
-        self.tools = {
-            "duckduckgo_search": {
-                "function": duckduckgo_search,
-                "description": "Search the web using DuckDuckGo. Input should be a search query string.",
-                "parameters": ["query"]
-            },
-            "scrape_url": {
-                "function": scrape_url,
-                "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
-                "parameters": ["url"]
-            },
-            "read_file": {
-                "function": read_file,
-                "description": "Read a file from the current working directory. Input should be a file path relative to the current working directory (e.g., 'README.md', 'src/main.py'). Maximum file size is 1 MB.",
-                "parameters": ["filepath"]
-            }
+        # Define available tools with function references
+        self.tool_functions = {
+            "web_search": web_search,
+            "scrape_url": scrape_url,
+            "read_file": read_file
         }
+        
+        # Define tools in OpenAI tools API format
+        self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web for information. Returns a list of numbered search results with title, URL, and description.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The search query string"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return (default: 10)",
+                                "default": 10
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "scrape_url",
+                    "description": "Scrape and parse HTML content from a URL into markdown format",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "The URL to scrape"
+                            }
+                        },
+                        "required": ["url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file from the current working directory. Maximum file size is 1 MB.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "File path relative to the current working directory (e.g., 'README.md', 'src/main.py')"
+                            }
+                        },
+                        "required": ["filepath"]
+                    }
+                }
+            }
+        ]
         
         # Initialize call tracking for logging
         self._initialize_tracking()
@@ -433,62 +586,16 @@ class ReActAgent:
             "token_stats": self.token_stats
         }
     
-    def _create_prompt(self, question: str, history: List[Dict[str, str]]) -> str:
+    def _call_llm(self, messages: List[Dict[str, str]], use_tools: bool = True) -> Dict:
         """
-        Create a ReAct prompt for the LLM.
+        Call the LLM API with optional tools.
         
         Args:
-            question: The user's question
-            history: List of previous thoughts, actions, and observations
+            messages: List of message dicts with role and content
+            use_tools: Whether to include tools in the API call
             
         Returns:
-            Formatted prompt string
-        """
-        tools_desc = "\n".join([
-            f"- {name}: {info['description']}"
-            for name, info in self.tools.items()
-        ])
-        
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        prompt = f"""You are a helpful assistant that can use tools to answer questions. You follow the ReAct (Reasoning + Acting) pattern.
-
-Current date and time: {current_time}
-
-Available tools:
-{tools_desc}
-
-Answer the following question by using the ReAct format:
-Thought: [Your reasoning about what to do next]
-Action: [Tool name to use: duckduckgo_search or scrape_url]
-Action Input: [Input for the tool]
-
-After receiving an observation, you can either:
-- Continue with another Thought/Action/Action Input if you need more information
-- Provide the final answer with: Final Answer: [Your complete answer]
-
-Question: {question}
-
-"""
-        
-        # Add history
-        label = {"thought": "Thought", "action": "Action", "action_input": "Action Input", "observation": "Observation"}
-        for entry in history:
-            t = entry.get("type")
-            if t in label:
-                prompt += f"{label[t]}: {entry['content']}\n"
-        
-        return prompt
-    
-    def _call_llm(self, prompt: str) -> str:
-        """
-        Call the OpenRouter API to get a response from the LLM.
-        
-        Args:
-            prompt: The prompt to send to the LLM
-            
-        Returns:
-            The LLM's response text
+            API response dict
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -497,31 +604,48 @@ Question: {question}
         
         data = {
             "model": self.model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
+            "messages": messages
         }
         
-        # Calculate input tokens
-        input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
+        # Add tools if requested
+        if use_tools:
+            data["tools"] = self.tools
+            data["tool_choice"] = "auto"
+        
+        # Add optional parameters if configured
+        if "temperature" in MODEL_CONFIG:
+            data["temperature"] = MODEL_CONFIG["temperature"]
+        if "top_p" in MODEL_CONFIG:
+            data["top_p"] = MODEL_CONFIG["top_p"]
+        if "max_tokens" in MODEL_CONFIG:
+            data["max_tokens"] = MODEL_CONFIG["max_tokens"]
+        
+        # Add thinking mode for Nemotron models if enabled
+        if MODEL_CONFIG.get("enable_thinking", False):
+            data["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
+        
+        # Calculate input tokens (rough estimate)
+        input_text = str(messages)
+        input_tokens = int(len(input_text) / CHARS_PER_TOKEN)
         
         # Log LLM call
-        logger.info(f"LLM call started - Model: {self.model}, Input tokens: {input_tokens}")
+        logger.info(f"LLM call started - Model: {self.model}, Input tokens: {input_tokens}, Tools: {use_tools}")
         start_time = time.time()
         
         try:
             response = requests.post(self.api_url, headers=headers, json=data, timeout=self.API_TIMEOUT)
             response.raise_for_status()
             result = response.json()
-            content = result["choices"][0]["message"]["content"]
             
-            # Calculate output tokens and response time
-            output_tokens = int(len(content) / CHARS_PER_TOKEN)
+            # Calculate response time
             response_time = time.time() - start_time
             
-            # Calculate tokens/sec
-            input_tokens_per_sec = input_tokens / response_time if response_time > 0 else 0
-            output_tokens_per_sec = output_tokens / response_time if response_time > 0 else 0
+            # Get message content
+            message = result["choices"][0]["message"]
+            content = message.get("content", "") or ""
+            
+            # Calculate output tokens
+            output_tokens = int(len(str(message)) / CHARS_PER_TOKEN)
             
             # Log LLM response
             logger.info(f"LLM call completed - Model: {self.model}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
@@ -531,17 +655,17 @@ Question: {question}
                 "type": "llm_call",
                 "model": self.model,
                 "timestamp": time.time(),
-                "input": prompt,
-                "output": content,
+                "input": messages,
+                "output": message,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "response_time_seconds": round(response_time, 2),
-                "input_tokens_per_sec": round(input_tokens_per_sec, 2),
-                "output_tokens_per_sec": round(output_tokens_per_sec, 2)
+                "input_tokens_per_sec": round(input_tokens / response_time, 2) if response_time > 0 else 0,
+                "output_tokens_per_sec": round(output_tokens / response_time, 2) if response_time > 0 else 0
             }
             self.call_sequence.append(call_entry)
             
-            # Aggregate token stats by model
+            # Aggregate token stats
             if self.model not in self.token_stats:
                 self.token_stats[self.model] = {
                     "total_input_tokens": 0,
@@ -552,7 +676,8 @@ Question: {question}
             self.token_stats[self.model]["total_output_tokens"] += output_tokens
             self.token_stats[self.model]["total_calls"] += 1
             
-            return content
+            return result
+            
         except Exception as e:
             response_time = time.time() - start_time
             logger.error(f"LLM call failed - Model: {self.model}, Response time: {response_time:.2f}s, Error: {str(e)}")
@@ -562,207 +687,171 @@ Question: {question}
                 "type": "llm_call",
                 "model": self.model,
                 "timestamp": time.time(),
-                "input": prompt,
+                "input": messages,
                 "error": str(e),
                 "response_time_seconds": round(response_time, 2)
             }
             self.call_sequence.append(call_entry)
             
-            return f"Error calling LLM: {str(e)}"
+            raise
     
-    def _parse_response(self, response: str) -> Dict[str, Optional[str]]:
+    def run(self, question: str, max_iterations: int = 10, verbose: bool = True, iteration_callback=None) -> str:
         """
-        Parse the LLM response to extract thought, action, and action input.
-        
-        Args:
-            response: The LLM's response text
-            
-        Returns:
-            Dictionary with parsed components
-        """
-        result = {
-            "thought": None,
-            "action": None,
-            "action_input": None,
-            "final_answer": None
-        }
-        
-        # Check for final answer
-        final_answer_match = re.search(r"Final Answer:\s*(.+)", response, re.DOTALL | re.IGNORECASE)
-        if final_answer_match:
-            result["final_answer"] = final_answer_match.group(1).strip()
-            return result
-        
-        # Extract thought
-        thought_match = re.search(r"Thought:\s*(.+?)(?=\n(?:Action:|$))", response, re.DOTALL | re.IGNORECASE)
-        if thought_match:
-            result["thought"] = thought_match.group(1).strip()
-        
-        # Extract action
-        action_match = re.search(r"Action:\s*(.+?)(?=\n|$)", response, re.IGNORECASE)
-        if action_match:
-            result["action"] = action_match.group(1).strip()
-        
-        # Extract action input
-        action_input_match = re.search(r"Action Input:\s*(.+?)(?=\n(?:Thought:|Action:|Final Answer:)|$)", response, re.DOTALL | re.IGNORECASE)
-        if action_input_match:
-            result["action_input"] = action_input_match.group(1).strip()
-        
-        return result
-    
-    def _execute_action(self, action: str, action_input: str) -> str:
-        """
-        Execute a tool action.
-        
-        Args:
-            action: Tool name
-            action_input: Input for the tool
-            
-        Returns:
-            Result from the tool execution
-        """
-        if action not in self.tools:
-            logger.warning(f"Unknown action attempted: {action}")
-            error_msg = f"Error: Unknown action '{action}'. Available actions: {', '.join(self.tools.keys())}"
-            
-            # Track failed tool call
-            tool_entry = {
-                "type": "tool_call",
-                "tool_name": action,
-                "timestamp": time.time(),
-                "input": action_input,
-                "error": error_msg
-            }
-            self.call_sequence.append(tool_entry)
-            
-            return error_msg
-        
-        # Log tool usage in yellow
-        print(f"{Fore.YELLOW}[TOOL CALL] {action}: {action_input}{Style.RESET_ALL}")
-        logger.info(f"Tool used: {action}, Arguments: {action_input}")
-        
-        tool_info = self.tools[action]
-        tool_function = tool_info["function"]
-        
-        start_time = time.time()
-        
-        try:
-            # Call the tool function with the action input
-            result = tool_function(action_input)
-            # Optional per-tool formatting
-            def fmt_duck(res):
-                formatted = []
-                for i, r in enumerate(res[:5], 1):
-                    if "error" in r:
-                        raise Exception(r["error"])  # handled below
-                    formatted.append(f"{i}. {r.get('title','N/A')}\n   URL: {r.get('href','N/A')}\n   {r.get('body','N/A')[:200]}...")
-                return "\n\n".join(formatted)
-            formatters = {"duckduckgo_search": fmt_duck, "scrape_url": lambda x: x}
-            output = (formatters.get(action, lambda x: str(x)))(result)
-            extra = ""
-            if action == "duckduckgo_search":
-                extra = f", returned {len(result)} results"
-            elif action == "scrape_url":
-                extra = f", scraped {len(output)} characters"
-            logger.info(f"Tool {action} completed successfully{extra}")
-            # Track successful tool call
-            self.call_sequence.append({
-                "type": "tool_call",
-                "tool_name": action,
-                "timestamp": time.time(),
-                "input": action_input,
-                "output": output,
-                "execution_time_seconds": round(time.time() - start_time, 2)
-            })
-            return output
-        except Exception as e:
-            logger.error(f"Tool {action} failed with exception: {str(e)}")
-            error_msg = f"Error executing action: {str(e)}"
-            # Track failed tool call
-            self.call_sequence.append({
-                "type": "tool_call",
-                "tool_name": action,
-                "timestamp": time.time(),
-                "input": action_input,
-                "error": error_msg,
-                "execution_time_seconds": round(time.time() - start_time, 2)
-            })
-            return error_msg
-    
-    def run(self, question: str, max_iterations: int = 5, verbose: bool = True, iteration_callback=None) -> str:
-        """
-        Run the ReAct agent to answer a question.
+        Run the agent to answer a question using OpenAI tools API.
         
         Args:
             question: The question to answer
-            max_iterations: Maximum number of reasoning iterations
+            max_iterations: Maximum number of tool calls
             verbose: Whether to print intermediate steps
-            iteration_callback: Optional callback function called after each iteration with iteration number
+            iteration_callback: Optional callback function called after each iteration
             
         Returns:
             The final answer
         """
-        history = []
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        system_prompt = MODEL_CONFIG.get("system_prompt", "You are a helpful assistant.")
+        messages = [
+            {
+                "role": "system",
+                "content": f"{system_prompt} Current date and time: {current_time}"
+            },
+            {
+                "role": "user",
+                "content": question
+            }
+        ]
         
         for iteration in range(max_iterations):
-            # Call the iteration callback if provided
             if iteration_callback:
                 iteration_callback(iteration)
+            
             if verbose:
                 print(f"\n{'='*60}")
                 print(f"Iteration {iteration + 1}/{max_iterations}")
                 print(f"{'='*60}")
             
-            # Create prompt and call LLM
-            prompt = self._create_prompt(question, history)
-            if verbose and iteration == 0:
-                print(f"\nInitial Prompt:\n{prompt}")
-            
-            response = self._call_llm(prompt)
-            if verbose:
-                print(f"\nLLM Response:\n{response}")
-            
-            # Parse response
-            parsed = self._parse_response(response)
-            
-            # Check if we have a final answer
-            if parsed["final_answer"]:
-                if verbose:
-                    print(f"\n{'='*60}")
-                    print("FINAL ANSWER")
-                    print(f"{'='*60}")
-                    print(parsed["final_answer"])
-                return parsed["final_answer"]
-            
-            # Add thought to history
-            if parsed["thought"]:
-                history.append({"type": "thought", "content": parsed["thought"]})
-                if verbose:
-                    print(f"\nThought: {parsed['thought']}")
-            
-            # Execute action if present
-            if parsed["action"] and parsed["action_input"]:
-                history.append({"type": "action", "content": parsed["action"]})
-                history.append({"type": "action_input", "content": parsed["action_input"]})
+            try:
+                # Call LLM with tools
+                result = self._call_llm(messages, use_tools=True)
                 
+                # Debug: log the result structure
                 if verbose:
-                    print(f"\nAction: {parsed['action']}")
-                    print(f"Action Input: {parsed['action_input']}")
+                    print(f"\nDEBUG: result type: {type(result)}")
+                    if isinstance(result, dict):
+                        print(f"DEBUG: result keys: {result.keys()}")
                 
-                # Execute the action
-                observation = self._execute_action(parsed["action"], parsed["action_input"])
-                history.append({"type": "observation", "content": observation})
+                logger.debug(f"LLM result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
                 
-                if verbose:
-                    print(f"\nObservation: {observation[:500]}{'...' if len(observation) > 500 else ''}")
-            else:
-                # If no valid action, prompt for final answer
-                if verbose:
-                    print("\nNo valid action found. Prompting for final answer...")
-                history.append({
-                    "type": "observation",
-                    "content": "Please provide your final answer based on the information gathered."
-                })
+                if not isinstance(result, dict):
+                    logger.error(f"Result is not a dict, it's: {type(result)}")
+                    return f"Error: API returned unexpected type {type(result)}"
+                
+                if "choices" not in result:
+                    logger.error(f"No 'choices' key in result. Keys: {result.keys()}")
+                    return f"Error: Unexpected API response format - missing 'choices'"
+                
+                choices = result.get("choices")
+                if not isinstance(choices, list):
+                    logger.error(f"'choices' is not a list, it's: {type(choices)}")
+                    return f"Error: Unexpected API response format - 'choices' is not a list"
+                
+                if not choices or len(choices) == 0:
+                    logger.error("No choices in API response")
+                    return "Error: No response from API"
+                
+                message = choices[0].get("message") if isinstance(choices[0], dict) else None
+                if not message:
+                    logger.error(f"No message in first choice. Choice: {choices[0]}")
+                    return "Error: No message in API response"
+                
+                # Check if there are tool calls
+                tool_calls = message.get("tool_calls")
+                
+                if tool_calls:
+                    # Add assistant message with tool calls to conversation
+                    messages.append(message)
+                    
+                    # Execute each tool call
+                    for tool_call in tool_calls:
+                        function_name = tool_call["function"]["name"]
+                        function_args = json.loads(tool_call["function"]["arguments"])
+                        
+                        if verbose:
+                            print(f"\nTool Call: {function_name}")
+                            print(f"Arguments: {json.dumps(function_args, indent=2)}")
+                        
+                        # Execute the tool
+                        start_time = time.time()
+                        try:
+                            if function_name in self.tool_functions:
+                                # Call the function with unpacked arguments
+                                result_content = self.tool_functions[function_name](**function_args)
+                                
+                                # Format output for specific tools and log details
+                                if function_name == "web_search" and isinstance(result_content, list):
+                                    num_results = len(result_content)
+                                    formatted = []
+                                    for i, r in enumerate(result_content[:10], 1):
+                                        if "error" in r:
+                                            raise Exception(r["error"])
+                                        formatted.append(f"{i}. {r.get('title','N/A')}\n   URL: {r.get('href','N/A')}\n   {r.get('body','N/A')[:200]}...")
+                                    result_content = "\n\n".join(formatted)
+                                    logger.info(f"Tool {function_name} completed successfully, returned {num_results} results, {len(result_content)} characters total")
+                                elif not isinstance(result_content, str):
+                                    result_content = str(result_content)
+                                    logger.info(f"Tool {function_name} completed successfully, returned {len(result_content)} characters")
+                                else:
+                                    logger.info(f"Tool {function_name} completed successfully, returned {len(result_content)} characters")
+                                
+                                # Track successful tool call
+                                self.call_sequence.append({
+                                    "type": "tool_call",
+                                    "tool_name": function_name,
+                                    "timestamp": time.time(),
+                                    "input": function_args,
+                                    "output": result_content,
+                                    "execution_time_seconds": round(time.time() - start_time, 2)
+                                })
+                            else:
+                                result_content = f"Error: Unknown function {function_name}"
+                                logger.error(f"Unknown tool function: {function_name}")
+                        except Exception as e:
+                            result_content = f"Error executing {function_name}: {str(e)}"
+                            logger.error(f"Tool {function_name} failed: {str(e)}")
+                            
+                            # Track failed tool call
+                            self.call_sequence.append({
+                                "type": "tool_call",
+                                "tool_name": function_name,
+                                "timestamp": time.time(),
+                                "input": function_args,
+                                "error": str(e),
+                                "execution_time_seconds": round(time.time() - start_time, 2)
+                            })
+                        
+                        if verbose:
+                            print(f"\nTool Result: {result_content[:500]}{'...' if len(result_content) > 500 else ''}")
+                        
+                        # Add tool response to messages
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": result_content
+                        })
+                
+                else:
+                    # No tool calls, this should be the final answer
+                    content = message.get("content", "")
+                    if verbose:
+                        print(f"\n{'='*60}")
+                        print("FINAL ANSWER")
+                        print(f"{'='*60}")
+                        print(content)
+                    return content
+                    
+            except Exception as e:
+                logger.error(f"Error in agent iteration {iteration}: {str(e)}")
+                return f"Error: {str(e)}"
         
         return "Maximum iterations reached without a final answer."
 
