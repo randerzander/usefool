@@ -136,7 +136,7 @@ def test_setup_logging_function():
 
 
 def test_utils_can_be_imported_by_modules():
-    """Test that utils module can be imported by discord_bot and react_agent."""
+    """Test that utils module can be imported by discord_bot and agent."""
     print("\nTesting utils module imports in other modules...")
     print("="*60)
     
@@ -159,24 +159,24 @@ def test_utils_can_be_imported_by_modules():
     print("✓ discord_bot.py imports from utils correctly")
     print("✓ Duplicated code removed from discord_bot.py")
     
-    # Check react_agent.py
-    react_agent_path = os.path.join(os.path.dirname(__file__), '..', 'react_agent.py')
-    with open(react_agent_path, 'r') as f:
+    # Check agent.py
+    agent_path = os.path.join(os.path.dirname(__file__), '..', 'agent.py')
+    with open(agent_path, 'r') as f:
         content = f.read()
     
     assert 'from utils import setup_logging, CHARS_PER_TOKEN' in content, \
-        "react_agent.py should import from utils"
+        "agent.py should import from utils"
     assert 'logger = setup_logging()' in content, \
-        "react_agent.py should call setup_logging()"
+        "agent.py should call setup_logging()"
     
     # Verify that duplicated code is removed
     assert 'class ColoredFormatter(logging.Formatter):' not in content, \
-        "ColoredFormatter class should be removed from react_agent.py"
+        "ColoredFormatter class should be removed from agent.py"
     assert 'init(autoreset=True)' not in content, \
-        "colorama init should be removed from react_agent.py"
+        "colorama init should be removed from agent.py"
     
-    print("✓ react_agent.py imports from utils correctly")
-    print("✓ Duplicated code removed from react_agent.py")
+    print("✓ agent.py imports from utils correctly")
+    print("✓ Duplicated code removed from agent.py")
     
     print("\n" + "="*60)
     print("✓ Utils module imports test passed!")
@@ -212,5 +212,5 @@ if __name__ == "__main__":
     print("1. ✓ ColoredFormatter class for colored log output")
     print("2. ✓ setup_logging() function for easy logging configuration")
     print("3. ✓ CHARS_PER_TOKEN constant for token calculations")
-    print("4. ✓ Centralized logging utilities used by both discord_bot and react_agent")
+    print("4. ✓ Centralized logging utilities used by both discord_bot and agent")
     print("="*60)

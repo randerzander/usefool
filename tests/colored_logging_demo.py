@@ -23,13 +23,13 @@ print()
 
 # Tool Calls (Yellow)
 print(f"{Fore.YELLOW}[TOOL CALL] duckduckgo_search: weather San Francisco today{Style.RESET_ALL}")
-print("2025-12-08 10:30:16 - react_agent - INFO - Tool used: duckduckgo_search, Arguments: weather San Francisco today")
-print("2025-12-08 10:30:17 - react_agent - INFO - Tool duckduckgo_search completed successfully, returned 5 results")
+print("2025-12-08 10:30:16 - agent - INFO - Tool used: duckduckgo_search, Arguments: weather San Francisco today")
+print("2025-12-08 10:30:17 - agent - INFO - Tool duckduckgo_search completed successfully, returned 5 results")
 print()
 
-print(f"{Fore.YELLOW}[TOOL CALL] scrape_url: https://weather.com/weather/today/l/San+Francisco+CA{Style.RESET_ALL}")
-print("2025-12-08 10:30:18 - react_agent - INFO - Tool used: scrape_url, Arguments: https://weather.com/weather/today/l/San+Francisco+CA")
-print("2025-12-08 10:30:19 - react_agent - INFO - Tool scrape_url completed successfully, scraped 2350 characters")
+print(f"{Fore.YELLOW}[TOOL CALL] read_url: https://weather.com/weather/today/l/San+Francisco+CA{Style.RESET_ALL}")
+print("2025-12-08 10:30:18 - agent - INFO - Tool used: read_url, Arguments: https://weather.com/weather/today/l/San+Francisco+CA")
+print("2025-12-08 10:30:19 - agent - INFO - Tool read_url completed successfully, scraped 2350 characters")
 print()
 
 # Final Response (Red)

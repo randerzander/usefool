@@ -13,12 +13,11 @@ import yaml
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from pyreadability import Readability
 from bs4 import BeautifulSoup
-import html2text
 import requests
 from colorama import Fore, Style
 from utils import setup_logging, CHARS_PER_TOKEN
+from tools.read_url import read_url
 
 # Configure logging with colored formatter
 setup_logging()
@@ -56,7 +55,7 @@ def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
     Returns:
         List of dictionaries containing index, title, url, and description
     """
-    logger.info(f"SearXNG search started - Query: '{query}', Max results: {max_results}")
+    start_time = time.time()
     try:
         from bs4 import BeautifulSoup
         
@@ -95,12 +94,16 @@ def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
                 'body': description
             })
         
-        logger.info(f"SearXNG search completed - Retrieved {len(results)} results")
-        
-        if results:
-            logger.debug(f"First result: {results[0].get('title', 'N/A')[:100]}")
-        else:
-            logger.warning("SearXNG search returned 0 results")
+        # Warn loudly if no results returned
+        if len(results) == 0:
+            print(f"{Fore.RED}[WARNING] Search returned 0 results for query: '{query}'{Style.RESET_ALL}")
+            logger.warning(f"Search returned 0 results for query: '{query}' - possible rate limit or connectivity issue")
+            return [{
+                'index': 1,
+                'title': 'No Search Results',
+                'href': 'N/A',
+                'body': 'The search engine returned 0 results. This could be due to rate limiting or connectivity issues. Consider taking a short break before searching again, or try rephrasing your query with different keywords.'
+            }]
         
         return results
         
@@ -109,45 +112,6 @@ def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
         return [{"error": f"Search failed: {str(e)}"}]
 
 
-def scrape_url(url: str) -> str:
-    """
-    Scrape a URL and convert HTML content to markdown using pyreadability.
-    
-    Args:
-        url: URL to scrape
-        
-    Returns:
-        Markdown content extracted from the page
-    """
-    logger.info(f"Scraping URL: {url}")
-    try:
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
-        response.raise_for_status()
-        logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
-        
-        # Use pyreadability to parse HTML and extract main content
-        reader = Readability(response.text)
-        result = reader.parse()
-        
-        # Convert HTML content to markdown using html2text
-        h = html2text.HTML2Text()
-        h.body_width = 0  # Don't wrap lines
-        h.ignore_links = False
-        markdown_content = h.handle(result['content'])
-        
-        # Add title if available
-        if result.get('title'):
-            markdown_content = f"# {result['title']}\n\n{markdown_content}"
-            logger.info(f"URL scraped successfully - Title: '{result['title'][:100]}', Content: {len(markdown_content)} chars")
-        else:
-            logger.info(f"URL scraped successfully - Content: {len(markdown_content)} chars")
-        
-        return markdown_content
-    except Exception as e:
-        logger.error(f"URL scraping failed for {url}: {str(e)}")
-        return f"Error scraping URL: {str(e)}"
 
 
 def read_file(filepath: str) -> str:
@@ -311,7 +275,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
             if vlm_model != default_model:
                 # Different model = likely needs OpenRouter
                 base_url = "https://openrouter.ai/api/v1/chat/completions"
-                logger.info(f"Using OpenRouter for VLM model: {model}")
+                
             else:
                 # Same model = use config default
                 base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
@@ -355,7 +319,6 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         if MODEL_CONFIG.get("enable_thinking", False):
             data["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
         
-        logger.info(f"Captioning image with VLM - Model: {model}, Base URL: {base_url}")
         start_time = time.time()
         
         response = requests.post(
@@ -365,7 +328,6 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
             timeout=90
         )
         
-        logger.info(f"VLM API response status: {response.status_code}")
         if response.status_code != 200:
             logger.error(f"VLM API error response: {response.text[:500]}")
         response.raise_for_status()
@@ -417,13 +379,12 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
             if vlm_model != default_model:
                 # Different model = likely needs OpenRouter
                 base_url = "https://openrouter.ai/api/v1/chat/completions"
-                logger.info(f"Using OpenRouter for VLM model: {model}")
+                
             else:
                 # Same model = use config default
                 base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
         # First round: Basic caption
-        logger.info("Starting first round of image captioning...")
         basic_prompt = "Describe this image in detail. What do you see? Include objects, people, actions, colors, and setting."
         
         try:
@@ -431,14 +392,7 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         except Exception as e:
             return f"Error in first round of captioning: {str(e)}"
         
-        # Log with full error message if it starts with "Error", otherwise truncate
-        if first_caption.startswith("Error"):
-            logger.info(f"First round caption: {first_caption}")
-        else:
-            logger.info(f"First round caption: {first_caption[:100]}...")
-        
         # Second round: Detailed caption based on user query
-        logger.info("Starting second round of image captioning with user context...")
         
         # Build a more specific prompt for the second round
         if user_query:
@@ -457,12 +411,6 @@ Now, provide additional details about the image that weren't covered in the firs
         except Exception as e:
             return f"Error in second round of captioning: {str(e)}\n\nFirst round result: {first_caption}"
         
-        # Log with full error message if it starts with "Error", otherwise truncate
-        if second_caption.startswith("Error"):
-            logger.info(f"Second round caption: {second_caption}")
-        else:
-            logger.info(f"Second round caption: {second_caption[:100]}...")
-        
         # Combine both captions
         combined = f"Initial Description:\n{first_caption}\n\nDetailed Analysis:\n{second_caption}"
         
@@ -475,14 +423,13 @@ Now, provide additional details about the image that weren't covered in the firs
 class ReActAgent:
     """
     An agent that can use tools to answer questions via OpenAI tools API.
-    Supports web_search, scrape_url, and read_file tools.
+    Supports web_search, read_url, and read_file tools.
     """
     
     # Constants
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
-    API_TIMEOUT = 90  # Timeout for API calls in seconds (3 minutes)
     
-    def __init__(self, api_key: str, model: str = None, base_url: str = None):
+    def __init__(self, api_key: str, model: str = None, base_url: str = None, enable_logging: bool = True):
         """
         Initialize the ReAct agent.
         
@@ -490,15 +437,23 @@ class ReActAgent:
             api_key: OpenRouter API key
             model: Model to use for reasoning. If None, uses config default.
             base_url: Base URL for OpenAI-compatible API. If None, uses config default.
+            enable_logging: Enable INFO level logging (default: True)
         """
         self.api_key = api_key
         self.model = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         self.api_url = base_url if base_url is not None else MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        self.enable_logging = enable_logging
+        
+        # Configure logger level based on enable_logging
+        if not enable_logging:
+            logger.setLevel(logging.WARNING)
+        else:
+            logger.setLevel(logging.INFO)
         
         # Define available tools with function references
         self.tool_functions = {
             "web_search": web_search,
-            "scrape_url": scrape_url,
+            "read_url": read_url,
             "read_file": read_file
         }
         
@@ -529,14 +484,14 @@ class ReActAgent:
             {
                 "type": "function",
                 "function": {
-                    "name": "scrape_url",
-                    "description": "Scrape and parse HTML content from a URL into markdown format",
+                    "name": "read_url",
+                    "description": "Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, documentation, blog posts, etc.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "The URL to scrape"
+                                "description": "The URL to read (supports YouTube, Wikipedia, and any web page)"
                             }
                         },
                         "required": ["url"]
@@ -628,12 +583,10 @@ class ReActAgent:
         input_text = str(messages)
         input_tokens = int(len(input_text) / CHARS_PER_TOKEN)
         
-        # Log LLM call
-        logger.info(f"LLM call started - Model: {self.model}, Input tokens: {input_tokens}, Tools: {use_tools}")
         start_time = time.time()
         
         try:
-            response = requests.post(self.api_url, headers=headers, json=data, timeout=self.API_TIMEOUT)
+            response = requests.post(self.api_url, headers=headers, json=data, timeout=None)
             response.raise_for_status()
             result = response.json()
             
@@ -648,7 +601,7 @@ class ReActAgent:
             output_tokens = int(len(str(message)) / CHARS_PER_TOKEN)
             
             # Log LLM response
-            logger.info(f"LLM call completed - Model: {self.model}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+            logger.info(f"LLM call completed - Model: {self.model}, Input tokens: {input_tokens}, Output tokens: {output_tokens}, Response time: {response_time:.2f}s")
             
             # Track call in sequence
             call_entry = {
@@ -788,20 +741,27 @@ class ReActAgent:
                                 result_content = self.tool_functions[function_name](**function_args)
                                 
                                 # Format output for specific tools and log details
+                                execution_time = round(time.time() - start_time, 2)
                                 if function_name == "web_search" and isinstance(result_content, list):
                                     num_results = len(result_content)
                                     formatted = []
                                     for i, r in enumerate(result_content[:10], 1):
                                         if "error" in r:
                                             raise Exception(r["error"])
-                                        formatted.append(f"{i}. {r.get('title','N/A')}\n   URL: {r.get('href','N/A')}\n   {r.get('body','N/A')[:200]}...")
+                                        formatted.append(f"{i}. {r.get('title','N/A')}\n   URL: {r.get('href','N/A')}\n   {r.get('body','N/A')}")
                                     result_content = "\n\n".join(formatted)
-                                    logger.info(f"Tool {function_name} completed successfully, returned {num_results} results, {len(result_content)} characters total")
+                                    query = function_args.get('query', 'unknown')
+                                    logger.info(f"Tool {function_name} - Query: '{query}', Results: {num_results}, Characters: {len(result_content)}, Response time: {execution_time}s")
+                                elif function_name == "read_url":
+                                    success = not result_content.startswith("Error")
+                                    status = "success" if success else "failed"
+                                    url = function_args.get('url', 'unknown')
+                                    logger.info(f"Tool {function_name} {status} - URL: {url}, Characters: {len(result_content)}, Response time: {execution_time}s")
                                 elif not isinstance(result_content, str):
                                     result_content = str(result_content)
-                                    logger.info(f"Tool {function_name} completed successfully, returned {len(result_content)} characters")
+                                    logger.info(f"Tool {function_name} completed, returned {len(result_content)} characters, response time: {execution_time}s")
                                 else:
-                                    logger.info(f"Tool {function_name} completed successfully, returned {len(result_content)} characters")
+                                    logger.info(f"Tool {function_name} completed, returned {len(result_content)} characters, response time: {execution_time}s")
                                 
                                 # Track successful tool call
                                 self.call_sequence.append({

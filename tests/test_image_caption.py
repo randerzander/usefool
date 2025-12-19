@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from unittest.mock import Mock, patch
-from react_agent import download_image, image_to_base64, caption_image_with_vlm, two_round_image_caption
+from agent import download_image, image_to_base64, caption_image_with_vlm, two_round_image_caption
 import tempfile
 
 
@@ -19,7 +19,7 @@ def test_download_image():
     print("="*60)
     
     # Mock the requests.get function
-    with patch('react_agent.requests.get') as mock_get:
+    with patch('agent.requests.get') as mock_get:
         # Create a mock response
         mock_response = Mock()
         mock_response.content = b'fake_image_data'
@@ -74,9 +74,9 @@ def test_caption_image_with_vlm():
     print("\nTesting VLM image captioning function structure...")
     print("="*60)
     
-    with patch('react_agent.download_image') as mock_download, \
-         patch('react_agent.image_to_base64') as mock_base64, \
-         patch('react_agent.requests.post') as mock_post:
+    with patch('agent.download_image') as mock_download, \
+         patch('agent.image_to_base64') as mock_base64, \
+         patch('agent.requests.post') as mock_post:
         
         # Set up mocks
         mock_download.return_value = '/tmp/test.jpg'
@@ -135,7 +135,7 @@ def test_two_round_captioning():
     print("\nTesting two-round image captioning...")
     print("="*60)
     
-    with patch('react_agent.caption_image_with_vlm') as mock_caption:
+    with patch('agent.caption_image_with_vlm') as mock_caption:
         # Set up mock to return different captions
         mock_caption.side_effect = [
             "First round: A cat sitting on a chair.",

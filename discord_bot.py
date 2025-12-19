@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Discord bot wrapper for the ReAct agent.
-This bot reads questions from Discord messages and uses the ReAct agent to answer them.
+Discord bot wrapper for the agent.
+This bot reads questions from Discord messages and uses the agent to answer them.
 
 The bot's token should be in a file named '.bot_token' in the current working directory.
 """
@@ -20,13 +20,17 @@ import threading
 import fcntl
 from datetime import datetime
 from pathlib import Path
-from react_agent import ReActAgent, two_round_image_caption
+from agent import ReActAgent, two_round_image_caption
 from colorama import Fore, Style
 from utils import setup_logging, CHARS_PER_TOKEN
 
 # Configure logging with colored formatter
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Suppress discord library INFO logs
+logging.getLogger('discord.client').setLevel(logging.WARNING)
+logging.getLogger('discord.gateway').setLevel(logging.WARNING)
 
 
 DEFAULT_CONFIG = {
@@ -58,7 +62,7 @@ class ReActDiscordBot:
     
     # Data directory for evaluation logging
     DATA_DIR = Path("data")
-    EVAL_FILE = DATA_DIR / "eval_qs.jsonl"
+    QA_FILE = DATA_DIR / "qa.jsonl"
     QUERY_LOGS_DIR = DATA_DIR / "query_logs"
     
     async def _add_reaction(self, message, emoji: str):
@@ -111,9 +115,8 @@ class ReActDiscordBot:
         # Register event handlers
         @self.client.event
         async def on_ready():
-            print(f"Bot logged in as {self.client.user}")
-            print(f"Bot is ready to answer questions!")
-            print(f"Invite link: https://discord.com/api/oauth2/authorize?client_id={self.client.user.id}&permissions=2048&scope=bot")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{Fore.GREEN}[{timestamp}] Bot logged in as {self.client.user} and ready to answer questions!{Style.RESET_ALL}")
         
         async def translate_user_mentions(text: str, guild) -> str:
             """
@@ -295,8 +298,8 @@ class ReActDiscordBot:
                 
                 await self._add_reaction(message, "⏳")
                 
-                # Log the user query in green
-                print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
+                # Log the user query in red
+                print(f"{Fore.RED}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
                 logger.info(f"User query received from {message.author.display_name}: {question}")
                 
                 # Reset tracking for new query
@@ -358,9 +361,9 @@ class ReActDiscordBot:
                     if image_urls:
                         self._unregister_image_caption_tool()
                     
-                    # Log the final response in red with character count
+                    # Log the final response in green with character count
                     answer_length = len(answer)
-                    print(f"{Fore.RED}[FINAL RESPONSE] ({answer_length} chars) {answer[:100]}...{Style.RESET_ALL}" if answer_length > 100 else f"{Fore.RED}[FINAL RESPONSE] ({answer_length} chars) {answer}{Style.RESET_ALL}")
+                    print(f"{Fore.GREEN}[FINAL RESPONSE] ({answer_length} chars) {answer[:100]}...{Style.RESET_ALL}" if answer_length > 100 else f"{Fore.GREEN}[FINAL RESPONSE] ({answer_length} chars) {answer}{Style.RESET_ALL}")
                     
                     # Process response based on length
                     if answer_length >= 1500:
@@ -368,14 +371,13 @@ class ReActDiscordBot:
                         print(f"{Fore.YELLOW}[CONDENSING] Response is {answer_length} chars, rewriting concisely...{Style.RESET_ALL}")
                         condensed = await self._condense_response(answer)
                         tldr = await self._generate_tldr(answer)
-                        answer = f"{tldr}\n\n{condensed}"
+                        answer = f"{condensed}\n\n{tldr}"
                         print(f"{Fore.YELLOW}[CONDENSED] {answer_length} → {len(answer)} chars{Style.RESET_ALL}")
                     elif answer_length >= 750:
                         # Add TL;DR only
-                        print(f"{Fore.YELLOW}[ADDING TLDR] Response is {answer_length} chars, adding TL;DR...{Style.RESET_ALL}")
-                        tldr = await self._generate_tldr(answer)
-                        answer = f"{tldr}\n\n{answer}"
-                        print(f"{Fore.YELLOW}[TLDR ADDED] {answer_length} → {len(answer)} chars{Style.RESET_ALL}")
+                        tldr, tldr_runtime = await self._generate_tldr(answer)
+                        answer = f"{answer}\n\n{tldr}"
+                        print(f"{Fore.YELLOW}[TLDR] {answer_length} → {len(answer)} chars, Response time: {tldr_runtime:.2f}s{Style.RESET_ALL}")
                     
                     # Remove both hourglass emoji reactions
                     await self._remove_reaction(message, "⏳")
@@ -414,14 +416,13 @@ class ReActDiscordBot:
                     complete_answer = answer + metadata
                     
                     # Convert @username references to Discord mentions before sending
-                    logger.info(f"Converting usernames to mentions in response ({len(complete_answer)} chars)")
                     complete_answer = await convert_usernames_to_mentions(complete_answer, message.guild)
                     
                     # Discord has a 2000 character limit for messages - split if needed
                     for chunk in self._split_long_message(complete_answer, 1900):
                         await message.channel.send(chunk)
                     
-                    # Save query log after successful response
+                    # Save query log after successful response (path already logged above)
                     self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
                 
                 except Exception as e:
@@ -619,7 +620,7 @@ class ReActDiscordBot:
                 Detailed caption from the VLM
             """
             try:
-                from react_agent import caption_image_with_vlm
+                from agent import caption_image_with_vlm
                 
                 # Build prompt with user query if available
                 if user_query:
@@ -706,16 +707,18 @@ class ReActDiscordBot:
         Returns:
             A concise TL;DR summary (the LLM will include the "TL;DR:" prefix)
         """
-        prompt = f"""You are Usefool. Provide a very brief summary (1-2 sentences) of your response below. Start with "TL;DR: " and write in first person (you are Usefool responding):
+        prompt = f"""You are Usefool. Provide a very brief summary (1-2 sentences) of your response below. Start with "TL;DR: " and DO NOT restate your name. Just summarize the key points directly:
 
 {text}"""
         
         try:
+            start_time = time.time()
             summary = await asyncio.to_thread(self._call_llm, prompt, 30)
-            return summary.strip()
+            runtime = time.time() - start_time
+            return summary.strip(), runtime
         except Exception as e:
             logger.error(f"Error generating TL;DR: {e}")
-            return "**TL;DR:** Summary unavailable"
+            return "**TL;DR:** Summary unavailable", 0.0
     
     async def _condense_response(self, text: str) -> str:
         """
@@ -792,8 +795,6 @@ Condensed version:"""
         # Get base_url from config
         base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
-        # Log LLM call
-        logger.info(f"LLM call started - Model: {model_to_use}, Input tokens: {input_tokens}")
         start_time = time.time()
         
         response = requests.post(
@@ -815,7 +816,7 @@ Condensed version:"""
         output_tokens_per_sec = output_tokens / response_time if response_time > 0 else 0
         
         # Log LLM response
-        logger.info(f"LLM call completed - Model: {model_to_use}, Response time: {response_time:.2f}s, Input tokens: {input_tokens}, Output tokens: {output_tokens}")
+        logger.info(f"LLM call completed - Model: {model_to_use}, Input tokens: {input_tokens}, Output tokens: {output_tokens}, Response time: {response_time:.2f}s")
         
         # Track call in query log
         call_entry = {
@@ -864,7 +865,7 @@ Condensed version:"""
     
     async def _log_eval_question(self, message: discord.Message, user: discord.User):
         """
-        Log a user question to the evaluation file when tagged with 🧪.
+        Log a user question to the qa.jsonl file when tagged with 🧪.
         
         Args:
             message: The Discord message to log
@@ -877,26 +878,29 @@ Condensed version:"""
             if not question:
                 return
             
-            # Create eval entry
-            eval_entry = {
-                "message_id": str(message.id),
-                "channel_id": str(message.channel.id),
-                "author": message.author.display_name,
-                "author_id": str(message.author.id),
+            # Get the next qid
+            next_qid = 1
+            if self.QA_FILE.exists():
+                with open(self.QA_FILE, 'r', encoding='utf-8') as f:
+                    lines = [line for line in f if line.strip()]
+                    if lines:
+                        last_entry = json.loads(lines[-1])
+                        next_qid = last_entry.get('qid', 0) + 1
+            
+            # Create qa entry
+            qa_entry = {
                 "question": question,
-                "timestamp": message.created_at.isoformat(),
-                "tagged_by": user.display_name,
-                "tagged_by_id": str(user.id),
-                "accepted_answer": None
+                "answer": "",  # Empty for user to fill in
+                "qid": next_qid
             }
             
-            # Append to eval file with file locking for thread safety
-            with open(self.EVAL_FILE, 'a', encoding='utf-8') as f:
+            # Append to qa file with file locking for thread safety
+            with open(self.QA_FILE, 'a', encoding='utf-8') as f:
                 with self._file_locked(f):
-                    f.write(json.dumps(eval_entry) + '\n')
+                    f.write(json.dumps(qa_entry) + '\n')
             
-            print(f"{Fore.CYAN}[EVAL] Question logged: {question[:50]}...{Style.RESET_ALL}")
-            logger.info(f"Eval question logged from {message.author.display_name}: {question}")
+            print(f"{Fore.CYAN}[EVAL] Question logged (qid={next_qid}): {question[:50]}...{Style.RESET_ALL}")
+            logger.info(f"Eval question logged from {message.author.display_name} (qid={next_qid}): {question}")
             
             await self._add_reaction(message, "📝")
         
@@ -906,7 +910,7 @@ Condensed version:"""
     async def _log_accepted_answer(self, message: discord.Message, user: discord.User):
         """
         Log an accepted answer when a bot response is tagged with ✅.
-        Updates the corresponding eval entry if it exists.
+        Updates the corresponding qa entry if it exists.
         
         Args:
             message: The bot's response message
@@ -925,31 +929,27 @@ Condensed version:"""
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 return
             
-            original_msg_id = str(original_msg.id)
+            question = self._remove_bot_mention(original_msg.content)
             
-            # Read existing eval entries with file locking
-            if not self.EVAL_FILE.exists():
+            # Find and update the qa entry
+            if not self.QA_FILE.exists():
                 return
             
             entries = []
             updated = False
             
             # Read and update entries with shared lock
-            with open(self.EVAL_FILE, 'r+', encoding='utf-8') as f:
+            with open(self.QA_FILE, 'r+', encoding='utf-8') as f:
                 with self._file_locked(f):
                     for line in f:
                         if line.strip():
                             entry = json.loads(line)
-                            if entry.get("message_id") == original_msg_id:
-                                entry.update({
-                                    "accepted_answer": answer,
-                                    "accepted_by": user.display_name,
-                                    "accepted_by_id": str(user.id),
-                                    "accepted_at": datetime.now().isoformat()
-                                })
+                            # Match by question text and empty answer
+                            if entry.get('question') == question and not entry.get('answer'):
+                                entry['answer'] = answer
                                 updated = True
-                                print(f"{Fore.CYAN}[EVAL] Answer accepted for question: {entry['question'][:50]}...{Style.RESET_ALL}")
-                                logger.info(f"Accepted answer logged for message {original_msg_id}")
+                                print(f"{Fore.GREEN}[EVAL] Answer accepted for qid={entry.get('qid')}{Style.RESET_ALL}")
+                                logger.info(f"Accepted answer logged for qid {entry.get('qid')}")
                             entries.append(entry)
                     if updated:
                         f.seek(0)
@@ -1013,12 +1013,9 @@ Condensed version:"""
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(log_entry, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"Query log saved to {filepath}")
-            print(f"{Fore.CYAN}[QUERY LOG] Saved to {filepath}{Style.RESET_ALL}")
-            
-            # Print token statistics summary
+            # Print combined token statistics and query log path
             for model, stats in merged_token_stats.items():
-                print(f"{Fore.CYAN}[TOKEN STATS] Model: {model} | Calls: {stats['total_calls']} | Input: {stats['total_input_tokens']} | Output: {stats['total_output_tokens']} | Total: {stats['total_input_tokens'] + stats['total_output_tokens']}{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}Model: {model} | Calls: {stats['total_calls']} | Input: {stats['total_input_tokens']} | Output: {stats['total_output_tokens']} | Total: {stats['total_input_tokens'] + stats['total_output_tokens']} | {filepath}{Style.RESET_ALL}")
         
         except Exception as e:
             logger.error(f"Failed to save query log: {str(e)}")
@@ -1034,7 +1031,6 @@ Condensed version:"""
     
     def run(self):
         """Start the Discord bot."""
-        print("Starting Discord bot...")
         self.client.run(self.token)
 
 
@@ -1061,8 +1057,8 @@ class BotRestartHandler(FileSystemEventHandler):
             current_time = time.time()
             # Debounce: only restart if it's been at least debounce_seconds since last restart
             if current_time - self.last_restart >= self.debounce_seconds:
-                print(f"\n🔄 Detected change in: {event.src_path}")
-                print("🔄 Restarting bot...")
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                print(f"\n🔄 [{timestamp}] Detected change in {event.src_path}, restarting bot...")
                 self.last_restart = current_time
                 self.restart_callback()
 
@@ -1118,7 +1114,8 @@ class BotRunner:
             self.last_restart_time = current_time
             self.restart_count += 1
         
-        print("🚀 Starting Discord bot...")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"🚀 [{timestamp}] Starting Discord bot...")
         # Create environment with DISCORD_BOT_SUBPROCESS flag to prevent nested auto-restart
         env = os.environ.copy()
         env["DISCORD_BOT_SUBPROCESS"] = "1"
@@ -1142,7 +1139,6 @@ class BotRunner:
     def stop_bot(self):
         """Stop the Discord bot process."""
         if self.process is not None and self.process.poll() is None:
-            print("\n🛑 Stopping bot...")
             self.process.terminate()
             try:
                 self.process.wait(timeout=5)

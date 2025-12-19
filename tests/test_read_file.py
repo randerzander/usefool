@@ -9,7 +9,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from react_agent import read_file
+from agent import read_file
 from pathlib import Path
 import tempfile
 
@@ -146,7 +146,7 @@ def test_agent_has_read_file_tool():
     print("Testing agent tool registration...")
     print("="*60)
     
-    from react_agent import ReActAgent
+    from agent import ReActAgent
     
     agent = ReActAgent('test_key')
     
@@ -167,7 +167,7 @@ def test_configurable_base_url():
     print("Testing configurable base_url...")
     print("="*60)
     
-    from react_agent import ReActAgent, MODEL_CONFIG
+    from agent import ReActAgent, MODEL_CONFIG
     
     # Test default base_url
     agent1 = ReActAgent('test_key')

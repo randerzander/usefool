@@ -13,11 +13,11 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
-from react_agent import ReActAgent
+from agent import ReActAgent
 from discord_bot import ReActDiscordBot
 
 
-def test_react_agent_tracking():
+def test_agent_tracking():
     """
     Test that the ReAct agent properly tracks LLM calls and tool calls.
     """
@@ -70,7 +70,7 @@ def test_llm_call_tracking():
     print("\nTesting LLM call tracking...")
     print("="*60)
     
-    with patch('react_agent.requests.post') as mock_post:
+    with patch('agent.requests.post') as mock_post:
         # Create a mock response
         mock_response = Mock()
         mock_response.json.return_value = {
@@ -127,7 +127,7 @@ def test_tool_call_tracking():
     print("\nTesting tool call tracking...")
     print("="*60)
     
-    with patch('react_agent.duckduckgo_search') as mock_search:
+    with patch('agent.duckduckgo_search') as mock_search:
         # Mock search results
         mock_search.return_value = [
             {"title": "Test Result", "href": "http://test.com", "body": "Test body"}
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     print("="*60)
     
     # Test 1: ReAct agent tracking
-    test_react_agent_tracking()
+    test_agent_tracking()
     
     # Test 2: LLM call tracking
     test_llm_call_tracking()

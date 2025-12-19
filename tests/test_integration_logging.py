@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import json
 from pathlib import Path
-from react_agent import ReActAgent
+from agent import ReActAgent
 from unittest.mock import patch, Mock
 
 

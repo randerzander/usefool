@@ -46,17 +46,17 @@ def test_colorama_import():
     
     print("✓ discord_bot.py imports colorama and utils correctly")
     
-    # Check react_agent.py imports from utils
-    react_agent_path = os.path.join(os.path.dirname(__file__), '..', 'react_agent.py')
-    with open(react_agent_path, 'r') as f:
+    # Check agent.py imports from utils
+    agent_path = os.path.join(os.path.dirname(__file__), '..', 'agent.py')
+    with open(agent_path, 'r') as f:
         content = f.read()
     
     assert 'from colorama import Fore, Style' in content, \
-        "colorama Fore and Style should still be imported for colored output in react_agent.py"
+        "colorama Fore and Style should still be imported for colored output in agent.py"
     assert 'from utils import setup_logging, CHARS_PER_TOKEN' in content, \
-        "utils should be imported in react_agent.py"
+        "utils should be imported in agent.py"
     
-    print("✓ react_agent.py imports colorama and utils correctly")
+    print("✓ agent.py imports colorama and utils correctly")
     
     print("\n" + "="*60)
     print("✓ Colorama import test passed!")
@@ -87,9 +87,9 @@ def test_colored_logging_exists():
         "Cyan colored eval logging should exist"
     print("✓ Eval entries logged in cyan (Fore.CYAN)")
     
-    # Check react_agent.py for colored tool calls (yellow)
-    react_agent_path = os.path.join(os.path.dirname(__file__), '..', 'react_agent.py')
-    with open(react_agent_path, 'r') as f:
+    # Check agent.py for colored tool calls (yellow)
+    agent_path = os.path.join(os.path.dirname(__file__), '..', 'agent.py')
+    with open(agent_path, 'r') as f:
         content = f.read()
     
     assert 'Fore.YELLOW' in content and '[TOOL CALL]' in content, \

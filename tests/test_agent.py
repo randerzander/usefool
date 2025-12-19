@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from react_agent import ReActAgent
+from agent import ReActAgent
 
 # Mock LLM response for testing
 class MockReActAgent(ReActAgent):
@@ -25,7 +25,7 @@ class MockReActAgent(ReActAgent):
                 "description": "Search the web using DuckDuckGo. Input should be a search query string.",
                 "parameters": ["query"]
             },
-            "scrape_url": {
+            "read_url": {
                 "function": lambda url: "# Test Article\n\nThis is test content from the URL.",
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
@@ -101,7 +101,7 @@ def test_tool_execution():
     print("✓ Test 3 passed")
     
     # Test scrape tool
-    result = agent._execute_action("scrape_url", "http://example.com")
+    result = agent._execute_action("read_url", "http://example.com")
     print("\nTest 4 - Execute scrape tool:")
     print(f"Result: {result[:100]}...")
     assert "Test Article" in result
@@ -157,5 +157,5 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("Note: To use the actual agent with real API calls:")
     print("1. Set OPENROUTER_API_KEY environment variable")
-    print("2. Run: python react_agent.py")
+    print("2. Run: python agent.py")
     print("="*60)

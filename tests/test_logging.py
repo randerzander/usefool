@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for logging functionality in discord_bot and react_agent.
+Test script for logging functionality in discord_bot and agent.
 This script verifies that logging is working correctly for user queries, 
 tool usage, and LLM calls.
 """
@@ -14,7 +14,7 @@ import time
 from unittest.mock import Mock, patch, MagicMock
 from io import StringIO
 from discord_bot import ReActDiscordBot
-from react_agent import ReActAgent
+from agent import ReActAgent
 
 
 class LogCapture:
@@ -29,7 +29,7 @@ class LogCapture:
     def __enter__(self):
         # Add handler to both loggers
         discord_logger = logging.getLogger('discord_bot')
-        react_logger = logging.getLogger('react_agent')
+        react_logger = logging.getLogger('agent')
         discord_logger.addHandler(self.handler)
         react_logger.addHandler(self.handler)
         return self
@@ -37,7 +37,7 @@ class LogCapture:
     def __exit__(self, *args):
         # Remove handler from both loggers
         discord_logger = logging.getLogger('discord_bot')
-        react_logger = logging.getLogger('react_agent')
+        react_logger = logging.getLogger('agent')
         discord_logger.removeHandler(self.handler)
         react_logger.removeHandler(self.handler)
     
@@ -70,7 +70,7 @@ def test_user_query_logging():
 
 
 def test_tool_usage_logging():
-    """Test that tool usage and arguments are logged in react_agent."""
+    """Test that tool usage and arguments are logged in agent."""
     print("\nTesting tool usage logging...")
     print("="*60)
     
@@ -113,9 +113,9 @@ def test_tool_usage_logging():
     print("="*60)
 
 
-def test_llm_logging_in_react_agent():
+def test_llm_logging_in_agent():
     """Test that LLM calls are logged with model, response time, and tokens."""
-    print("\nTesting LLM logging in react_agent...")
+    print("\nTesting LLM logging in agent...")
     print("="*60)
     
     agent = ReActAgent("mock_key", "mock_model")
@@ -305,8 +305,8 @@ if __name__ == "__main__":
     # Test tool usage logging
     test_tool_usage_logging()
     
-    # Test LLM logging in react_agent
-    test_llm_logging_in_react_agent()
+    # Test LLM logging in agent
+    test_llm_logging_in_agent()
     
     # Test LLM logging in discord_bot
     test_llm_logging_in_discord_bot()
@@ -325,7 +325,7 @@ if __name__ == "__main__":
     print("Summary:")
     print("The logging implementation covers:")
     print("1. User queries in discord_bot")
-    print("2. Tool usage and arguments in react_agent")
+    print("2. Tool usage and arguments in agent")
     print("3. LLM model, response time, and token counts (input/output)")
     print("4. Error logging for both LLM calls and tool execution")
     print("="*60)
