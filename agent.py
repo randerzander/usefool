@@ -17,7 +17,10 @@ from bs4 import BeautifulSoup
 import requests
 from colorama import Fore, Style
 from utils import setup_logging, CHARS_PER_TOKEN
-from tools.read_url import read_url
+from tools.read_url import read_url, TOOL_SPEC as READ_URL_SPEC
+from tools.code import write_code, run_code, WRITE_CODE_SPEC, RUN_CODE_SPEC
+from tools.web_search import web_search, TOOL_SPEC as WEB_SEARCH_SPEC
+from tools.read_file import read_file, TOOL_SPEC as READ_FILE_SPEC
 
 # Configure logging with colored formatter
 setup_logging()
@@ -41,138 +44,6 @@ def load_model_config():
         return DEFAULT_MODEL_CONFIG.copy()
 
 MODEL_CONFIG = load_model_config()
-
-
-# Tool implementations
-def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
-    """
-    Search using local SearXNG instance and return results.
-    
-    Args:
-        query: Search query string
-        max_results: Maximum number of results to return
-        
-    Returns:
-        List of dictionaries containing index, title, url, and description
-    """
-    start_time = time.time()
-    try:
-        from bs4 import BeautifulSoup
-        
-        # Make request to SearXNG
-        url = f"http://localhost:8081/search?q={query}"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        
-        logger.debug(f"SearXNG response - Status: {response.status_code}, Content length: {len(response.text)}")
-        
-        # Parse HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find all result articles
-        articles = soup.find_all('article', class_='result')
-        
-        results = []
-        for i, article in enumerate(articles[:max_results], 1):
-            # Extract title
-            h3 = article.find('h3')
-            title_link = h3.find('a') if h3 else None
-            title = title_link.get_text(strip=True) if title_link else 'N/A'
-            
-            # Extract URL
-            url_link = article.find('a', class_='url_header')
-            url = url_link.get('href') if url_link else 'N/A'
-            
-            # Extract description
-            content_p = article.find('p', class_='content')
-            description = content_p.get_text(strip=True) if content_p else 'N/A'
-            
-            results.append({
-                'index': i,
-                'title': title,
-                'href': url,
-                'body': description
-            })
-        
-        # Warn loudly if no results returned
-        if len(results) == 0:
-            print(f"{Fore.RED}[WARNING] Search returned 0 results for query: '{query}'{Style.RESET_ALL}")
-            logger.warning(f"Search returned 0 results for query: '{query}' - possible rate limit or connectivity issue")
-            return [{
-                'index': 1,
-                'title': 'No Search Results',
-                'href': 'N/A',
-                'body': 'The search engine returned 0 results. This could be due to rate limiting or connectivity issues. Consider taking a short break before searching again, or try rephrasing your query with different keywords.'
-            }]
-        
-        return results
-        
-    except Exception as e:
-        logger.error(f"SearXNG search failed: {str(e)}")
-        return [{"error": f"Search failed: {str(e)}"}]
-
-
-
-
-def read_file(filepath: str) -> str:
-    """
-    Read a file from the current working directory.
-    This tool allows the agent to read files that are needed to answer questions.
-    
-    Args:
-        filepath: Path to the file to read (relative to current working directory)
-        
-    Returns:
-        Content of the file or error message
-    """
-    logger.info(f"Reading file: {filepath}")
-    try:
-        # Get the current working directory (fully resolved)
-        cwd = Path.cwd().resolve()
-        
-        # Resolve the file path relative to cwd (this also resolves symlinks)
-        file_path = (cwd / filepath).resolve()
-        
-        # Security check: ensure the resolved path is within cwd
-        # This prevents directory traversal attacks and symlink-based bypasses
-        try:
-            file_path.relative_to(cwd)
-        except ValueError:
-            logger.warning(f"Access denied for file outside cwd: {filepath}")
-            return f"Error: Access denied. File path '{filepath}' is outside the current working directory."
-        
-        # Check if file exists
-        if not file_path.exists():
-            logger.warning(f"File not found: {filepath}")
-            return f"Error: File '{filepath}' not found in current working directory."
-        
-        # Check if it's a file (not a directory)
-        if not file_path.is_file():
-            logger.warning(f"Not a file: {filepath}")
-            return f"Error: '{filepath}' is not a file."
-        
-        # Check file size to avoid reading very large files
-        max_size = 1024 * 1024  # 1 MB limit
-        file_size = file_path.stat().st_size
-        if file_size > max_size:
-            logger.warning(f"File too large: {filepath} ({file_size} bytes)")
-            return f"Error: File '{filepath}' is too large ({file_size} bytes). Maximum size is {max_size} bytes (1 MB)."
-        
-        # Read the file
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            logger.info(f"File read successfully: {filepath} ({file_size} bytes)")
-            return content
-        except UnicodeDecodeError:
-            # If the file is binary, return an error
-            logger.warning(f"Binary file cannot be read as text: {filepath}")
-            return f"Error: File '{filepath}' appears to be a binary file and cannot be read as text."
-        
-    except Exception as e:
-        logger.error(f"Error reading file {filepath}: {str(e)}")
-        return f"Error reading file: {str(e)}"
-
 
 def download_image(url: str, save_path: str = None) -> str:
     """
@@ -455,67 +326,18 @@ class ReActAgent:
         self.tool_functions = {
             "web_search": web_search,
             "read_url": read_url,
-            "read_file": read_file
+            "read_file": read_file,
+            "write_code": write_code,
+            "run_code": run_code
         }
         
         # Define tools in OpenAI tools API format
         self.tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Search the web for information. Returns a list of numbered search results with title, URL, and description.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The search query string"
-                            },
-                            "max_results": {
-                                "type": "integer",
-                                "description": "Maximum number of results to return (default: 10)",
-                                "default": 10
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "read_url",
-                    "description": "Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, documentation, blog posts, etc.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "url": {
-                                "type": "string",
-                                "description": "The URL to read (supports YouTube, Wikipedia, and any web page)"
-                            }
-                        },
-                        "required": ["url"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "read_file",
-                    "description": "Read a file from the current working directory. Maximum file size is 1 MB.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "filepath": {
-                                "type": "string",
-                                "description": "File path relative to the current working directory (e.g., 'README.md', 'src/main.py')"
-                            }
-                        },
-                        "required": ["filepath"]
-                    }
-                }
-            }
+            WEB_SEARCH_SPEC,
+            READ_URL_SPEC,
+            READ_FILE_SPEC,
+            WRITE_CODE_SPEC,
+            RUN_CODE_SPEC
         ]
         
         # Initialize call tracking for logging
@@ -650,13 +472,13 @@ class ReActAgent:
             
             raise
     
-    def run(self, question: str, max_iterations: int = 10, verbose: bool = True, iteration_callback=None) -> str:
+    def run(self, question: str, max_iterations: int = 30, verbose: bool = True, iteration_callback=None) -> str:
         """
         Run the agent to answer a question using OpenAI tools API.
         
         Args:
             question: The question to answer
-            max_iterations: Maximum number of tool calls
+            max_iterations: Maximum number of tool calls (default: 30)
             verbose: Whether to print intermediate steps
             iteration_callback: Optional callback function called after each iteration
             
@@ -759,6 +581,19 @@ class ReActAgent:
                                     status = "success" if success else "failed"
                                     url = function_args.get('url', 'unknown')
                                     logger.info(f"Tool {function_name} {status} - URL: {url}, Characters: {len(result_content)}, Response time: {execution_time}s")
+                                elif function_name == "write_code":
+                                    success = not result_content.startswith("#")
+                                    logger.info(f"Tool {function_name} completed, generated {len(result_content)} characters, response time: {execution_time}s")
+                                elif function_name == "run_code":
+                                    # result_content is a dict for run_code
+                                    if isinstance(result_content, dict):
+                                        success = result_content.get('success', False)
+                                        exit_code = result_content.get('exit_code', -1)
+                                        logger.info(f"Tool {function_name} completed - Success: {success}, Exit code: {exit_code}, Response time: {execution_time}s")
+                                        # Convert dict to string for LLM
+                                        result_content = json.dumps(result_content, indent=2)
+                                    else:
+                                        logger.info(f"Tool {function_name} completed, response time: {execution_time}s")
                                 elif not isinstance(result_content, str):
                                     result_content = str(result_content)
                                     logger.info(f"Tool {function_name} completed, returned {len(result_content)} characters, response time: {execution_time}s")

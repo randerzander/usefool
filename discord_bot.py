@@ -418,9 +418,38 @@ class ReActDiscordBot:
                     # Convert @username references to Discord mentions before sending
                     complete_answer = await convert_usernames_to_mentions(complete_answer, message.guild)
                     
+                    # Check if the response contains file attachment instructions
+                    files_to_attach = []
+                    import re
+                    # Match "attach filename" or "attach scratch/filename"
+                    attachment_pattern = r'attach\s+(?:scratch/)?([^\s,]+\.\w+)'
+                    matches = re.findall(attachment_pattern, complete_answer, re.IGNORECASE)
+                    
+                    if matches:
+                        project_root = Path(__file__).parent
+                        for filename in matches:
+                            # Always look in scratch/ directory
+                            full_path = project_root / 'scratch' / filename
+                            if full_path.exists() and full_path.is_file():
+                                try:
+                                    files_to_attach.append(discord.File(str(full_path)))
+                                    logger.info(f"Attaching file: scratch/{filename}")
+                                except Exception as e:
+                                    logger.error(f"Error attaching file scratch/{filename}: {e}")
+                            else:
+                                logger.warning(f"File not found for attachment: scratch/{filename}")
+                        
+                        # Remove the attach instructions from the message
+                        complete_answer = re.sub(r'attach\s+(?:scratch/)?[^\s,]+\.\w+', '', complete_answer, flags=re.IGNORECASE).strip()
+                    
                     # Discord has a 2000 character limit for messages - split if needed
-                    for chunk in self._split_long_message(complete_answer, 1900):
-                        await message.channel.send(chunk)
+                    chunks = self._split_long_message(complete_answer, 1900)
+                    
+                    # Send first chunk with attachments, rest without
+                    if chunks:
+                        await message.channel.send(chunks[0], files=files_to_attach if files_to_attach else None)
+                        for chunk in chunks[1:]:
+                            await message.channel.send(chunk)
                     
                     # Save query log after successful response (path already logged above)
                     self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
@@ -1050,6 +1079,14 @@ class BotRestartHandler(FileSystemEventHandler):
     def on_modified(self, event):
         """Called when a file is modified."""
         if event.is_directory:
+            return
+        
+        # Normalize the path for comparison
+        path = str(Path(event.src_path).resolve())
+        
+        # Skip files in scratch/ directory or data/ directory
+        if '/scratch/' in path or '\\scratch\\' in path or '/data/' in path or '\\data\\' in path:
+            # Silently ignore - don't print anything
             return
             
         # Only restart for .py and .yaml files

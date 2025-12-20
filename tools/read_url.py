@@ -21,6 +21,26 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+# Tool specification for agent registration
+TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": "read_url",
+        "description": "Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, documentation, blog posts, etc.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to read (supports YouTube, Wikipedia, and any web page)"
+                }
+            },
+            "required": ["url"]
+        }
+    }
+}
+
+
 def read_url(url: str) -> str:
     """
     Read content from any URL and return it in a readable format.
