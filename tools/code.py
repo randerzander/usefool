@@ -25,7 +25,7 @@ WRITE_CODE_SPEC = {
     "type": "function",
     "function": {
         "name": "write_code",
-        "description": "Generate Python code based on a task description. Returns clean, executable Python code.",
+        "description": "Generate Python code and save it to scratch/. Returns only the filename, not the code itself.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -36,6 +36,10 @@ WRITE_CODE_SPEC = {
                 "context": {
                     "type": "string",
                     "description": "Optional additional context or existing code to modify"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional filename to save as (default: CODE_{timestamp}.py)"
                 }
             },
             "required": ["task"]
@@ -47,35 +51,32 @@ RUN_CODE_SPEC = {
     "type": "function",
     "function": {
         "name": "run_code",
-        "description": "Execute Python code in an isolated Docker container. Returns stdout, stderr, and exit code. The code is saved to scratch/ and executed safely.",
+        "description": "Execute Python code in an isolated Docker container. If no filename given, executes the most recently created .py file in scratch/.",
         "parameters": {
             "type": "object",
             "properties": {
-                "code": {
-                    "type": "string",
-                    "description": "Python code to execute"
-                },
                 "filename": {
                     "type": "string",
-                    "description": "Optional filename to save the code as (default: auto-generated)"
+                    "description": "Optional filename in scratch/ to execute. If not provided, runs the most recently created .py file."
                 }
             },
-            "required": ["code"]
+            "required": []
         }
     }
 }
 
 
-def write_code(task: str, context: str = None) -> str:
+def write_code(task: str, context: str = None, filename: str = None) -> str:
     """
-    Generate Python code based on a task description.
+    Generate Python code and save it to scratch/.
     
     Args:
         task: Description of what the code should do
         context: Optional additional context or existing code to modify
+        filename: Optional filename to save as (default: CODE_{timestamp}.py)
         
     Returns:
-        Generated Python code as a string
+        Filename where code was saved (not the code itself)
     """
     try:
         # Get API settings from config
@@ -92,7 +93,14 @@ Task: {task}"""
         if context:
             prompt += f"\n\nContext/Existing Code:\n{context}"
         
-        prompt += "\n\nProvide ONLY the Python code without any explanations or markdown formatting. Do not include ```python markers."
+        prompt += """
+
+IMPORTANT REQUIREMENTS:
+- When creating visualizations (matplotlib/seaborn/etc), ALWAYS use plt.savefig('filename.png') instead of plt.show()
+- Save all outputs (images, data files, etc.) to the current directory
+- Print a confirmation message when files are saved
+- Provide ONLY the Python code without any explanations or markdown formatting
+- Do not include ```python markers"""
         
         # Make API call
         headers = {
@@ -113,8 +121,7 @@ Task: {task}"""
         if "max_tokens" in CONFIG:
             data["max_tokens"] = CONFIG["max_tokens"]
         
-        logger.info(f"Generating code with model: {model}")
-        
+        start_time = time.time()
         response = requests.post(base_url, headers=headers, json=data, timeout=120)
         response.raise_for_status()
         
@@ -131,13 +138,32 @@ Task: {task}"""
         
         code = code.strip()
         
-        logger.info(f"Generated {len(code)} characters of code")
+        # Save code to scratch/
+        project_root = Path(__file__).parent.parent.absolute()
+        scratch_dir = project_root / "scratch"
+        scratch_dir.mkdir(exist_ok=True)
         
-        return code
+        # Generate filename if not provided
+        if filename is None:
+            filename = f"CODE_{int(time.time())}.py"
+        else:
+            # User provided a filename - just ensure it ends with .py
+            if not filename.endswith(".py"):
+                filename += ".py"
+        
+        # Write code to file
+        code_file = scratch_dir / filename
+        with open(code_file, 'w') as f:
+            f.write(code)
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"Generated code with model: {model}, saved to {filename}, {len(code)} characters, response time: {elapsed_time:.2f}s")
+        
+        return filename
         
     except Exception as e:
         logger.error(f"Code generation failed: {str(e)}")
-        return f"# Error generating code: {str(e)}"
+        return f"Error: {str(e)}"
 
 
 def explain_code(code: str) -> str:
@@ -260,46 +286,63 @@ def fix_code(code: str, error: str = None) -> str:
         return f"# Error fixing code: {str(e)}"
 
 
-def run_code(code: str, filename: str = None) -> dict:
+def run_code(filename: str = None) -> dict:
     """
     Run Python code in a Docker container using Python from the host system.
+    If no filename is provided, executes the most recently created .py file in scratch/.
     
     Args:
-        code: Python code to execute
-        filename: Optional filename to save the code as (default: temp_code_{timestamp}.py)
+        filename: Optional filename in scratch/ to execute. If None, runs most recent .py file.
         
     Returns:
         Dict with keys: success (bool), stdout (str), stderr (str), exit_code (int), filename (str)
     """
+    import docker
+    
     try:
-        import docker
-        
         # Get project root directory
         project_root = Path(__file__).parent.parent.absolute()
         scratch_dir = project_root / "scratch"
         venv_dir = project_root / ".venv"
         
-        # Resolve the actual Python executable path (follow symlinks)
-        python_exe = Path(venv_dir / "bin" / "python").resolve()
-        python_parent = python_exe.parent.parent.parent  # Get the uv python installation dir
-        
         # Create scratch directory if it doesn't exist
         scratch_dir.mkdir(exist_ok=True)
         
-        # Generate filename if not provided
+        # If no filename provided, find most recent .py file
         if filename is None:
-            filename = f"temp_code_{int(time.time())}.py"
-        
-        # Ensure filename ends with .py
-        if not filename.endswith(".py"):
-            filename += ".py"
-        
-        # Write code to scratch directory
-        code_file = scratch_dir / filename
-        with open(code_file, 'w') as f:
-            f.write(code)
+            py_files = list(scratch_dir.glob("*.py"))
+            if not py_files:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": "No Python files found in scratch/",
+                    "exit_code": -1,
+                    "filename": None
+                }
+            # Sort by modification time, most recent first
+            py_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            code_file = py_files[0]
+            filename = code_file.name
+        else:
+            # Ensure filename ends with .py
+            if not filename.endswith(".py"):
+                filename += ".py"
+            code_file = scratch_dir / filename
+            
+            if not code_file.exists():
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": f"File not found: {filename}",
+                    "exit_code": -1,
+                    "filename": filename
+                }
         
         logger.info(f"Running code from {code_file} in Docker container")
+        
+        # Resolve the actual Python executable path (follow symlinks)
+        python_exe = Path(venv_dir / "bin" / "python").resolve()
+        python_parent = python_exe.parent.parent.parent  # Get the uv python installation dir
         
         # Initialize Docker client
         client = docker.from_env()
@@ -311,18 +354,26 @@ def run_code(code: str, filename: str = None) -> dict:
         
         # Run container with volumes mounted
         # Mount the actual Python installation and venv site-packages
+        # Mount scratch as the working directory so code runs with cwd = scratch/
+        # This allows code to access files directly via relative paths
+        # Add Python bin directory to PATH so subprocess calls work
+        container_scratch = str(scratch_dir)
+        python_bin_dir = python_exe.parent
         container = client.containers.run(
             "ubuntu:22.04",
-            command=f"{python_exe} /scratch/{filename}",
+            command=f"{python_exe} {filename}",
             volumes={
                 str(python_parent): {'bind': str(python_parent), 'mode': 'ro'},
                 str(venv_dir): {'bind': str(venv_dir), 'mode': 'ro'},
-                str(scratch_dir): {'bind': '/scratch', 'mode': 'rw'}
+                str(scratch_dir): {'bind': container_scratch, 'mode': 'rw'}
             },
             environment={
-                'PYTHONPATH': str(venv_dir / 'lib' / 'python3.12' / 'site-packages')
+                'PYTHONPATH': str(venv_dir / 'lib' / 'python3.12' / 'site-packages'),
+                'MPLCONFIGDIR': f'{container_scratch}/.matplotlib',  # Avoid permission errors
+                'HOME': container_scratch,  # Set HOME to writable directory
+                'PATH': f"{python_bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
             },
-            working_dir="/scratch",
+            working_dir=container_scratch,
             user=f"{uid}:{gid}",  # Run as current user, not root
             remove=True,
             detach=False,
@@ -345,22 +396,31 @@ def run_code(code: str, filename: str = None) -> dict:
         
     except docker.errors.ContainerError as e:
         # Container exited with non-zero code
-        # Note: container is already removed when remove=True, so we can't fetch logs
-        # The error message from ContainerError contains stderr
-        error_msg = str(e)
-        # Try to extract stderr from the error message
+        # The error object contains both stdout and stderr
+        stdout_str = ""
+        stderr_str = ""
+        
+        # Extract stderr (always present in ContainerError)
         if hasattr(e, 'stderr') and e.stderr:
             stderr_str = e.stderr.decode('utf-8') if isinstance(e.stderr, bytes) else str(e.stderr)
         else:
-            stderr_str = error_msg
+            stderr_str = str(e)
         
-        # Log with truncated stderr for readability
-        stderr_preview = stderr_str[:200] + "..." if len(stderr_str) > 200 else stderr_str
-        logger.error(f"Code execution failed with exit code {e.exit_status}: {stderr_preview}")
+        # Some errors might have stdout too
+        if hasattr(e, 'stdout') and e.stdout:
+            stdout_str = e.stdout.decode('utf-8') if isinstance(e.stdout, bytes) else str(e.stdout)
+        
+        # Combine for full error context
+        full_error = f"STDERR:\n{stderr_str}"
+        if stdout_str:
+            full_error = f"STDOUT:\n{stdout_str}\n\n{full_error}"
+        
+        # Log full error without truncation
+        logger.error(f"Code execution failed with exit code {e.exit_status}:\n{full_error}")
         
         return {
             "success": False,
-            "stdout": "",
+            "stdout": stdout_str,
             "stderr": stderr_str,
             "exit_code": e.exit_status,
             "filename": filename

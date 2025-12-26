@@ -55,7 +55,7 @@ def download_youtube_video(url: str, output_dir: str = "scratch"):
         # Check if video already exists in cache
         cached_video = None
         for ext in ['mp4', 'webm', 'mkv', 'flv']:
-            potential_file = output_path / f"{video_id}.{ext}"
+            potential_file = output_path / f"YOUTUBE_{video_id}.{ext}"
             if potential_file.exists():
                 cached_video = str(potential_file)
                 break
@@ -63,7 +63,7 @@ def download_youtube_video(url: str, output_dir: str = "scratch"):
         # Check for cached thumbnail
         cached_thumbnail = None
         for ext in ['jpg', 'jpeg', 'png', 'webp']:
-            potential_thumb = output_path / f"{video_id}.{ext}"
+            potential_thumb = output_path / f"YOUTUBE_{video_id}_thumb.{ext}"
             if potential_thumb.exists():
                 cached_thumbnail = str(potential_thumb)
                 break
@@ -73,7 +73,7 @@ def download_youtube_video(url: str, output_dir: str = "scratch"):
             return cached_video, video_id, cached_thumbnail
         
         # Use simple video ID-based naming to avoid filename issues
-        simple_template = str(output_path / f"{video_id}.%(ext)s")
+        simple_template = str(output_path / f"YOUTUBE_{video_id}.%(ext)s")
         
         # Configure yt-dlp options
         ydl_opts = {
@@ -135,7 +135,7 @@ def download_youtube_comments(video_id: str, output_dir: str = "scratch", max_co
     # Check if comments already exist in cache
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
-    comments_file = output_path / f"{video_id}_comments.json"
+    comments_file = output_path / f"YOUTUBE_{video_id}_comments.json"
     
     if comments_file.exists():
         try:
@@ -206,7 +206,7 @@ def get_youtube_transcript(video_id: str, output_dir: str = "scratch"):
     # Check if transcript already exists in cache
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
-    transcript_file = output_path / f"{video_id}_transcript.txt"
+    transcript_file = output_path / f"YOUTUBE_{video_id}_transcript.txt"
     
     if transcript_file.exists():
         try:

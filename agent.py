@@ -21,6 +21,7 @@ from tools.read_url import read_url, TOOL_SPEC as READ_URL_SPEC
 from tools.code import write_code, run_code, WRITE_CODE_SPEC, RUN_CODE_SPEC
 from tools.web_search import web_search, TOOL_SPEC as WEB_SEARCH_SPEC
 from tools.read_file import read_file, TOOL_SPEC as READ_FILE_SPEC
+from tools.list_files import list_files, LIST_FILES_SPEC
 
 # Configure logging with colored formatter
 setup_logging()
@@ -29,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_CONFIG = {
     "base_url": "https://openrouter.ai/api/v1/chat/completions",
-    "default_model": "amazon/nova-2-lite-v1:free",
     "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
 }
 
@@ -67,7 +67,9 @@ def download_image(url: str, save_path: str = None) -> str:
             # Extract filename from URL or generate one
             filename = url.split('/')[-1].split('?')[0]
             if not filename or '.' not in filename:
-                filename = f"image_{int(time.time())}.png"
+                filename = f"DOWNLOAD_{int(time.time())}.png"
+            else:
+                filename = f"DOWNLOAD_{filename}"
             save_path = f"scratch/{filename}"
         
         # Ensure directory exists
@@ -312,8 +314,27 @@ class ReActAgent:
             enable_logging: Enable INFO level logging (default: True)
         """
         self.api_key = api_key
-        self.model = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         self.api_url = base_url if base_url is not None else MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        
+        # Auto-detect model from localhost API if base_url is localhost
+        if model is None:
+            if self._is_localhost(self.api_url):
+                detected_model = self._get_model_from_api()
+                if detected_model:
+                    self.model = detected_model
+                    if enable_logging:
+                        logger.info(f"Auto-detected model from localhost: {self.model}")
+                else:
+                    self.model = MODEL_CONFIG.get("default_model")
+                    if not self.model:
+                        raise ValueError("No model specified and auto-detection failed. Please specify a model in config.yaml")
+            else:
+                self.model = MODEL_CONFIG.get("default_model")
+                if not self.model:
+                    raise ValueError("No default_model specified in config.yaml")
+        else:
+            self.model = model
+            
         self.enable_logging = enable_logging
         
         # Configure logger level based on enable_logging
@@ -328,7 +349,8 @@ class ReActAgent:
             "read_url": read_url,
             "read_file": read_file,
             "write_code": write_code,
-            "run_code": run_code
+            "run_code": run_code,
+            "list_files": list_files
         }
         
         # Define tools in OpenAI tools API format
@@ -337,11 +359,61 @@ class ReActAgent:
             READ_URL_SPEC,
             READ_FILE_SPEC,
             WRITE_CODE_SPEC,
-            RUN_CODE_SPEC
+            RUN_CODE_SPEC,
+            LIST_FILES_SPEC
         ]
         
         # Initialize call tracking for logging
         self._initialize_tracking()
+    
+    def _is_localhost(self, url: str) -> bool:
+        """Check if URL points to localhost."""
+        return "localhost" in url or "127.0.0.1" in url
+    
+    def _get_model_from_api(self) -> str:
+        """
+        Get the running model name from the API's /v1/models endpoint.
+        
+        Returns:
+            Model ID/name or None if failed
+        """
+        try:
+            # Convert chat/completions URL to models endpoint
+            if "/chat/completions" in self.api_url:
+                models_url = self.api_url.replace("/chat/completions", "/models")
+            elif self.api_url.endswith("/v1"):
+                models_url = f"{self.api_url}/models"
+            else:
+                models_url = f"{self.api_url}/v1/models"
+            
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            response = requests.get(models_url, headers=headers, timeout=5)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # OpenAI API format: {"object": "list", "data": [...]}
+            models = data.get("data", []) if "data" in data else [data] if isinstance(data, dict) else data
+            
+            if models and len(models) > 0:
+                # Get first model's ID
+                model = models[0]
+                if isinstance(model, dict):
+                    model_id = model.get("id") or model.get("name") or model.get("model")
+                    # Strip .gguf extension if present for cleaner display
+                    if model_id and model_id.endswith(".gguf"):
+                        model_id = model_id[:-5]
+                    return model_id
+                return str(model)
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Failed to auto-detect model from API: {e}")
+            return None
     
     def _initialize_tracking(self):
         """Initialize or reset tracking data structures."""
@@ -582,18 +654,27 @@ class ReActAgent:
                                     url = function_args.get('url', 'unknown')
                                     logger.info(f"Tool {function_name} {status} - URL: {url}, Characters: {len(result_content)}, Response time: {execution_time}s")
                                 elif function_name == "write_code":
-                                    success = not result_content.startswith("#")
-                                    logger.info(f"Tool {function_name} completed, generated {len(result_content)} characters, response time: {execution_time}s")
+                                    # write_code now returns just the filename
+                                    success = not result_content.startswith("Error")
+                                    logger.info(f"Tool {function_name} completed - Saved to: {result_content}, Response time: {execution_time}s")
                                 elif function_name == "run_code":
                                     # result_content is a dict for run_code
                                     if isinstance(result_content, dict):
                                         success = result_content.get('success', False)
                                         exit_code = result_content.get('exit_code', -1)
-                                        logger.info(f"Tool {function_name} completed - Success: {success}, Exit code: {exit_code}, Response time: {execution_time}s")
+                                        executed_file = result_content.get('filename', 'unknown')
                                         # Convert dict to string for LLM
-                                        result_content = json.dumps(result_content, indent=2)
+                                        result_content_str = json.dumps(result_content, indent=2)
+                                        char_count = len(result_content_str)
+                                        logger.info(f"Tool {function_name} completed - File: {executed_file}, Success: {success}, Exit code: {exit_code}, Characters: {char_count}, Response time: {execution_time}s")
+                                        result_content = result_content_str
                                     else:
                                         logger.info(f"Tool {function_name} completed, response time: {execution_time}s")
+                                elif function_name == "list_files":
+                                    # Count number of files listed
+                                    file_count = result_content.count("\n") - 2 if "\n" in result_content else 0
+                                    pattern = function_args.get('pattern', 'all files')
+                                    logger.info(f"Tool {function_name} completed - Pattern: '{pattern}', Files: {file_count}, Response time: {execution_time}s")
                                 elif not isinstance(result_content, str):
                                     result_content = str(result_content)
                                     logger.info(f"Tool {function_name} completed, returned {len(result_content)} characters, response time: {execution_time}s")

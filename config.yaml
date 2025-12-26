@@ -17,8 +17,10 @@ base_url: "http://localhost:8080/v1/chat/completions"
 api_key_env: "OPENROUTER_API_KEY"
 
 # Default model for main reasoning and agent operations
+# If base_url is localhost, the model will be auto-detected from the API
+# Otherwise, specify the model name here
 #default_model: "nvidia/nemotron-3-nano-30b-a3b"
-default_model: "Qwen3-VL-30B-A3B-Instruct-UD-Q6_K_XL"
+#default_model: "Qwen3-VL-30B-A3B-Instruct-UD-Q6_K_XL"
 
 # Model parameters (optional - comment out to use model defaults)
 # temperature: 1

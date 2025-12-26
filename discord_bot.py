@@ -36,11 +36,7 @@ logging.getLogger('discord.gateway').setLevel(logging.WARNING)
 DEFAULT_CONFIG = {
     "auto_restart": True,
     "base_url": "https://openrouter.ai/api/v1/chat/completions",
-    "default_model": "amazon/nova-2-lite-v1:free",
-    "intent_detection_model": "amazon/nova-2-lite-v1:free",
-    "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
-    "conciseness_model": "amazon/nova-2-lite-v1:free",
-    "tldr_model": "amazon/nova-2-lite-v1:free"
+    "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
 }
 
 def load_config():
@@ -348,10 +344,13 @@ class ReActDiscordBot:
                         # Schedule the coroutine in the event loop
                         asyncio.run_coroutine_threadsafe(update_hourglass(iteration_num), self.client.loop)
                     
+                    # Record when query started for auto-attaching generated files
+                    query_start_time = time.time()
+                    
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                     answer = await asyncio.to_thread(
-                        self.agent.run, question_with_context, max_iterations=10, verbose=False, iteration_callback=iteration_callback
+                        self.agent.run, question_with_context, max_iterations=30, verbose=False, iteration_callback=iteration_callback
                     )
                     
                     # Unregister channel history tool to avoid memory leaks
@@ -418,24 +417,49 @@ class ReActDiscordBot:
                     # Convert @username references to Discord mentions before sending
                     complete_answer = await convert_usernames_to_mentions(complete_answer, message.guild)
                     
-                    # Check if the response contains file attachment instructions
+                    # Auto-attach any images created in scratch/ after query started
                     files_to_attach = []
                     import re
-                    # Match "attach filename" or "attach scratch/filename"
+                    import glob
+                    
+                    project_root = Path(__file__).parent
+                    scratch_dir = project_root / 'scratch'
+                    
+                    # Prefixes used by tools for cache/intermediate files (don't auto-attach)
+                    tool_prefixes = ('YOUTUBE_', 'CODE_', 'DOWNLOAD_')
+                    
+                    # Find all image files in scratch/
+                    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.webp']
+                    for ext in image_extensions:
+                        for img_path in scratch_dir.glob(ext):
+                            # Skip files with tool prefixes (cache/intermediate files)
+                            if img_path.name.startswith(tool_prefixes):
+                                continue
+                            # Check if file was created/modified after query started
+                            if img_path.stat().st_mtime > query_start_time:
+                                try:
+                                    files_to_attach.append(discord.File(str(img_path)))
+                                    logger.info(f"Auto-attaching recent image: {img_path.name}")
+                                except Exception as e:
+                                    logger.error(f"Error attaching image {img_path.name}: {e}")
+                    
+                    # Also check for explicit "attach filename" instructions in response
                     attachment_pattern = r'attach\s+(?:scratch/)?([^\s,]+\.\w+)'
                     matches = re.findall(attachment_pattern, complete_answer, re.IGNORECASE)
                     
                     if matches:
-                        project_root = Path(__file__).parent
                         for filename in matches:
-                            # Always look in scratch/ directory
-                            full_path = project_root / 'scratch' / filename
+                            full_path = scratch_dir / filename
+                            # Only attach if not already in files_to_attach
                             if full_path.exists() and full_path.is_file():
-                                try:
-                                    files_to_attach.append(discord.File(str(full_path)))
-                                    logger.info(f"Attaching file: scratch/{filename}")
-                                except Exception as e:
-                                    logger.error(f"Error attaching file scratch/{filename}: {e}")
+                                # Check if already added by timestamp check
+                                already_attached = any(f.filename == filename for f in files_to_attach)
+                                if not already_attached:
+                                    try:
+                                        files_to_attach.append(discord.File(str(full_path)))
+                                        logger.info(f"Attaching explicitly mentioned file: {filename}")
+                                    except Exception as e:
+                                        logger.error(f"Error attaching file {filename}: {e}")
                             else:
                                 logger.warning(f"File not found for attachment: scratch/{filename}")
                         
@@ -796,8 +820,8 @@ Condensed version:"""
             "Content-Type": "application/json"
         }
         
-        # Use specified model or default to the main reasoning model from config
-        model_to_use = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
+        # Use specified model or default to the agent's model
+        model_to_use = model if model is not None else self.agent.model
         
         data = {
             "model": model_to_use,
