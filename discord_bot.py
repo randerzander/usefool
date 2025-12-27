@@ -20,7 +20,7 @@ import threading
 import fcntl
 from datetime import datetime
 from pathlib import Path
-from agent import ReActAgent, two_round_image_caption
+from agent import Agent, two_round_image_caption
 from colorama import Fore, Style
 from utils import setup_logging, CHARS_PER_TOKEN
 
@@ -53,8 +53,8 @@ CONFIG = load_config()
 MODEL_CONFIG = CONFIG
 
 
-class ReActDiscordBot:
-    """Discord bot that wraps the ReAct agent."""
+class DiscordBot:
+    """Discord bot that wraps the agent."""
     
     # Data directory for evaluation logging
     DATA_DIR = Path("data")
@@ -112,17 +112,17 @@ class ReActDiscordBot:
     
     def __init__(self, token: str, api_key: str):
         """
-        Initialize the Discord bot with ReAct agent.
+        Initialize the Discord bot with agent.
         
         Args:
             token: Discord bot token
-            api_key: OpenRouter API key for the ReAct agent
+            api_key: OpenRouter API key for the agent
         """
         self.token = token
         self.api_key = api_key
         # Get base_url from config, default to OpenRouter
         base_url = CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
-        self.agent = ReActAgent(api_key, base_url=base_url)
+        self.agent = Agent(api_key, base_url=base_url)
         
         # Ensure data directory exists
         self.DATA_DIR.mkdir(exist_ok=True)
@@ -400,7 +400,7 @@ If anyone shares personal information (preferences, context, facts, etc.), consi
                 # Record when query started for auto-attaching generated files
                 query_start_time = time.time()
                 
-                # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
+                # Use the agent to answer the question (verbose=False to reduce log noise)
                 # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                 answer = await asyncio.to_thread(
                     self.agent.run, question_with_context, max_iterations=30, verbose=False, iteration_callback=iteration_callback
@@ -1440,7 +1440,7 @@ def main():
         run_with_auto_restart()
     else:
         # Create and run the bot normally
-        bot = ReActDiscordBot(token, api_key)
+        bot = DiscordBot(token, api_key)
         bot.run()
 
 

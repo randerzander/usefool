@@ -293,8 +293,8 @@ Now, provide additional details about the image that weren't covered in the firs
         return f"Error in two-round captioning: {str(e)}"
 
 
-# ReAct Agent implementation
-class ReActAgent:
+# Agent implementation
+class Agent:
     """
     An agent that can use tools to answer questions via OpenAI tools API.
     Supports web_search, read_url, and read_file tools.
@@ -305,7 +305,7 @@ class ReActAgent:
     
     def __init__(self, api_key: str, model: str = None, base_url: str = None, enable_logging: bool = True):
         """
-        Initialize the ReAct agent.
+        Initialize the agent.
         
         Args:
             api_key: OpenRouter API key
@@ -745,7 +745,7 @@ class ReActAgent:
 
 def main():
     """
-    Main function to demonstrate the ReAct agent.
+    Main function to demonstrate the agent.
     """
     # Get API key from environment
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -755,7 +755,7 @@ def main():
         return
     
     # Create agent
-    agent = ReActAgent(api_key)
+    agent = Agent(api_key)
     
     # Example questions
     questions = [

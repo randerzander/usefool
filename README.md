@@ -1,6 +1,6 @@
-# scraper
+# usefool
 
-A lean ReAct (Reasoning + Acting) agent that can search the web and scrape URLs. Optional Discord bot wrapper included.
+A lean AI agent that can search the web and scrape URLs. Optional Discord bot wrapper included.
 
 ## Quick Start
 
@@ -16,8 +16,7 @@ export OPENROUTER_API_KEY=your_api_key_here
 
 3) Run
 ```bash
-python react_agent.py    # demo
-python example.py        # examples
+python agent.py    # demo
 ```
 
 ## Discord Bot
@@ -44,23 +43,27 @@ Features:
 - Reply chain context support
 - Image captioning with vision models
 - Reaction-based eval logging (🧪 to log question, ✅ to mark accepted answer)
+- User info persistence (add_userinfo/read_userinfo tools)
+- DM support (all DMs are treated as queries)
 
 ## Usage in Code
 
 ```python
-from react_agent import ReActAgent
+from agent import Agent
 import os
 
-agent = ReActAgent(os.getenv("OPENROUTER_API_KEY"))
+agent = Agent(os.getenv("OPENROUTER_API_KEY"))
 answer = agent.run("Latest AI news?", verbose=True)
 print(answer)
 ```
 
 ## Available Tools
 
-- `duckduckgo_search(query)` - Search the web
-- `scrape_url(url)` - Scrape and parse HTML to markdown
+- `web_search(query)` - Search the web via SearXNG
+- `read_url(url)` - Read and extract content from URLs (YouTube, Wikipedia, web pages)
 - `read_file(filepath)` - Read files from current directory (1MB limit, path traversal protected)
+- `add_userinfo(username, info)` - Store user information for future reference
+- `read_userinfo(username)` - Recall stored user information (case-insensitive)
 
 ## Requirements
 
@@ -71,8 +74,7 @@ print(answer)
 ## Tests
 
 ```bash
-python tests/test_react_agent.py
-python tests/test_discord_bot.py
+python tests/test_user_info.py
 ```
 
 ## License
