@@ -365,12 +365,12 @@ class DiscordBot:
                     image_context = f"\n\n[Images attached: {len(image_urls)} image(s)]\n{details}\n\nYou can use the 'caption_image' tool to analyze these images.\n"
                 
                 # Get user info
-                user_info = self._get_user_info(message.author.display_name)
+                # user_info = self._get_user_info(message.author.display_name)
+                user_info = ""
                 
                 # Build question with context
                 question_with_context = f"""[You are a Discord bot named Usefool]
 
-If anyone shares personal information (preferences, context, facts, etc.), consider using the add_userinfo tool to save it for future conversations. You can save info about the current user or specify a different username if they're talking about someone else. This helps you provide more personalized assistance.
 {image_context}{user_info}
 {reply_context}User question: {question}"""
                 
@@ -378,7 +378,7 @@ If anyone shares personal information (preferences, context, facts, etc.), consi
                 self._register_channel_history_tool(message.channel, message.id)
                 
                 # Register user info tool for this user
-                self._register_userinfo_tool(message.author.display_name)
+                # self._register_userinfo_tool(message.author.display_name)
                 
                 # Register image caption tool if images are present
                 if image_urls:
@@ -410,7 +410,7 @@ If anyone shares personal information (preferences, context, facts, etc.), consi
                 self._unregister_channel_history_tool()
                 
                 # Unregister user info tool
-                self._unregister_userinfo_tool()
+                # self._unregister_userinfo_tool()
                 
                 # Unregister image caption tool if it was registered
                 if image_urls:
@@ -539,7 +539,7 @@ If anyone shares personal information (preferences, context, facts, etc.), consi
                 self._unregister_channel_history_tool()
                 
                 # Unregister user info tool in case of error
-                self._unregister_userinfo_tool()
+                # self._unregister_userinfo_tool()
                 
                 # Unregister image caption tool in case of error
                 self._unregister_image_caption_tool()
