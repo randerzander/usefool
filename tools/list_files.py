@@ -5,27 +5,22 @@ File listing tool for scratch directory.
 
 import os
 from pathlib import Path
+from .tool_utils import create_tool_spec
 from datetime import datetime
 
 
 # Tool specification for agent registration
-LIST_FILES_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "list_files",
-        "description": "List files in the scratch/ directory. Returns file names, sizes, and modification times. Useful for seeing what code files or outputs are available.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Optional glob pattern to filter files (e.g., '*.py', '*.png', 'CODE_*'). If not provided, lists all files."
-                }
-            },
-            "required": []
+LIST_FILES_SPEC = create_tool_spec(
+    name="list_files",
+    description="List files in the scratch/ directory. Returns file names, sizes, and modification times. Useful for seeing what code files or outputs are available.",
+    parameters={
+        "pattern": {
+            "type": "string",
+            "description": "Optional glob pattern to filter files (e.g., '*.py', '*.png', 'CODE_*'). If not provided, lists all files."
         }
-    }
-}
+    },
+    required=[]
+)
 
 
 def list_files(pattern: str = None) -> str:

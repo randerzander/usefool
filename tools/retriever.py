@@ -23,11 +23,11 @@ with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
 
 # Database path
-DB_PATH = Path(__file__).parent.parent / "data" / "lancedb"
-TABLE_NAME = "embeddings"
+DB_PATH = Path(__file__).parent.parent / CONFIG.get("retriever", {}).get("db_path", "data/lancedb")
+TABLE_NAME = CONFIG.get("retriever", {}).get("table_name", "embeddings")
 
 # Embedding model settings
-EMBEDDING_DIM = 384  # all-MiniLM-L6-v2 dimension
+EMBEDDING_DIM = CONFIG.get("retriever", {}).get("embedding_dim", 384)
 
 # Tokenizer (lazy loaded)
 _tokenizer = None
@@ -41,7 +41,8 @@ def _get_embedding_model():
         try:
             from sentence_transformers import SentenceTransformer
             # Use a lightweight, fast model
-            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            embedding_model_name = CONFIG.get("retriever", {}).get("embedding_model", "all-MiniLM-L6-v2")
+            _embedding_model = SentenceTransformer(embedding_model_name)
         except ImportError:
             logger.error("sentence-transformers not installed. Run: pip install sentence-transformers")
             raise
@@ -67,17 +68,17 @@ def _get_tokenizer():
     return _tokenizer
 
 
-def chunk(text: str, tokens: int = 1024) -> list[str]:
+def chunk(text: str) -> list[str]:
     """
     Split text into chunks by token count using sentencepiece tokenizer.
     
     Args:
         text: Text to chunk
-        tokens: Target tokens per chunk (default: 1024)
         
     Returns:
         List of text chunks
     """
+    tokens = CONFIG.get("retriever", {}).get("chunk_size", 1024)
     tokenizer = _get_tokenizer()
     chunks = []
     
@@ -141,7 +142,7 @@ def _get_embedding(text: str) -> list[float]:
     return embedding.tolist()
 
 
-def write(source: str, text: str, metadata: Optional[dict] = None, chunk_size: int = 1024) -> str:
+def write(source: str, text: str, metadata: Optional[dict] = None) -> str:
     """
     Generate embedding for text and write to LanceDB table.
     Automatically chunks large documents and stores each chunk with sequence numbering.
@@ -150,11 +151,11 @@ def write(source: str, text: str, metadata: Optional[dict] = None, chunk_size: i
         source: URL or filename identifying the source
         text: Text content to embed
         metadata: Optional additional metadata to store
-        chunk_size: Target tokens per chunk (default: 1024)
         
     Returns:
         Status message
     """
+    chunk_size = CONFIG.get("retriever", {}).get("chunk_size", 1024)
     try:
         # Create database directory if it doesn't exist
         DB_PATH.mkdir(parents=True, exist_ok=True)
@@ -163,7 +164,7 @@ def write(source: str, text: str, metadata: Optional[dict] = None, chunk_size: i
         db = lancedb.connect(str(DB_PATH))
         
         # Chunk the text
-        chunks = chunk(text, chunk_size)
+        chunks = chunk(text)
         
         # Prepare all chunk data
         chunk_data = []

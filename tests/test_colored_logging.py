@@ -13,7 +13,7 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from pathlib import Path
 from datetime import datetime
-from discord_bot import ReActDiscordBot
+from discord_bot import DiscordBot
 from colorama import Fore, Style
 
 
@@ -107,10 +107,10 @@ def test_data_directory_setup():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('discord_bot.Agent') as MockAgent:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Check that DATA_DIR and EVAL_FILE are defined
         assert hasattr(bot, 'DATA_DIR'), "Bot should have DATA_DIR attribute"
@@ -134,10 +134,10 @@ def test_reaction_intents_enabled():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('discord_bot.Agent') as MockAgent:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Check that intents.reactions was set
         # We can verify this by checking the code
@@ -161,10 +161,10 @@ async def test_log_eval_question():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('discord_bot.Agent') as MockAgent:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Create test eval file path in a temp location
         import tempfile
@@ -229,10 +229,10 @@ async def test_log_accepted_answer():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('discord_bot.Agent') as MockAgent:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Create test eval file path in a temp location
         import tempfile

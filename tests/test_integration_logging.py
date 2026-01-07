@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import json
 from pathlib import Path
-from agent import ReActAgent
+from agent import Agent
 from unittest.mock import patch, Mock
 
 
@@ -40,7 +40,7 @@ def test_integration():
         
         # Create agent and run a query
         print("\n1. Creating agent and running query...")
-        agent = ReActAgent("test_api_key")
+        agent = Agent("test_api_key")
         
         # Simulate the agent making decisions
         print("   - Calling LLM for reasoning...")

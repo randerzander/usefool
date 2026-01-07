@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from unittest.mock import Mock, patch
-from agent import download_image, image_to_base64, caption_image_with_vlm, two_round_image_caption
+from utils import download_image, image_to_base64, caption_image_with_vlm, two_round_image_caption
 import tempfile
 
 
@@ -185,9 +185,9 @@ def test_discord_bot_image_handling():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('discord_bot.Agent') as MockAgent:
         
-        from discord_bot import ReActDiscordBot
+        from discord_bot import DiscordBot
         
         # Create a mock agent with tools
         mock_agent_instance = Mock()
@@ -195,7 +195,7 @@ def test_discord_bot_image_handling():
         MockAgent.return_value = mock_agent_instance
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         bot.agent.tools = {}  # Reset tools
         
         # Test that image caption tool methods exist

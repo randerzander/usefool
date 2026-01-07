@@ -6,7 +6,7 @@ Allows users to tell the bot information about themselves.
 
 import logging
 from pathlib import Path
-from utils import create_tool_spec
+from .tool_utils import create_tool_spec
 
 
 logger = logging.getLogger(__name__)

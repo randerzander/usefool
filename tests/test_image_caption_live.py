@@ -11,7 +11,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent import caption_image_with_vlm
+from utils import caption_image_with_vlm
 
 
 def test_image_caption_from_url():

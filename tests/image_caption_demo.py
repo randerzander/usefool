@@ -10,7 +10,7 @@ Note: This requires a valid OPENROUTER_API_KEY environment variable.
 """
 
 import os
-from agent import two_round_image_caption
+from utils import two_round_image_caption
 
 def demo_image_captioning():
     """Demonstrate the image captioning functionality."""

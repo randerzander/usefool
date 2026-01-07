@@ -1,4 +1,3 @@
-import utils
 import json
 import asyncio
 import time
@@ -6,7 +5,7 @@ import os
 import yaml
 from openai import OpenAI
 from pathlib import Path
-from agent import ReActAgent
+from agent import Agent
 from colorama import Fore, Style
 
 # Load config
@@ -83,7 +82,7 @@ async def main():
     model = CONFIG.get("default_model", "gpt-3.5-turbo")
     
     # Don't strip base_url for agent - it expects the full path
-    agent = ReActAgent(api_key=api_key, model=model, base_url=base_url)
+    agent = Agent(api_key=api_key, model=model, base_url=base_url)
     
     with open("data/qa.jsonl", "r") as f:
         qa_pairs = [json.loads(line) for line in f if line.strip()]

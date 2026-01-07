@@ -35,7 +35,7 @@ async def test_reply_chain_context():
     # Message 2 (bot's response to msg1): "Answer: The PR includes..."
     msg2 = Mock()
     msg2.content = "Answer: The PR includes changes to replace thinking message with emoji"
-    msg2.author.display_name = "Usefool"
+    msg2.author.display_name = "BetaBro"
     msg2.reference = Mock()
     msg2.reference.message_id = 1
     msg2.referenced_message = msg1
@@ -113,7 +113,7 @@ async def test_reply_chain_context():
     context = await get_reply_chain(msg3)
     print(f"Context:\n{context}")
     assert "User:" in context, "Should include user's original message"
-    assert "Usefool:" in context, "Should include bot's response"
+    assert "BetaBro:" in context, "Should include bot's response"
     assert "summarize PR #9" in context, "Should include original question"
     assert "The PR includes changes" in context, "Should include bot's answer"
     print("✓ Passed: Context includes full reply chain")
@@ -124,7 +124,7 @@ async def test_reply_chain_context():
         # First should be the oldest message (msg1), last should be newest (msg2)
         print(f"Lines in context: {lines}")
         assert "User:" in lines[0], f"First message should be from User, got: {lines[0]}"
-        assert "Usefool:" in lines[1], f"Second message should be from bot, got: {lines[1]}"
+        assert "BetaBro:" in lines[1], f"Second message should be from bot, got: {lines[1]}"
         print("✓ Passed: Messages are in chronological order")
     
     print("\n" + "="*60)
@@ -142,7 +142,7 @@ async def test_bot_formats_question_with_context():
     # Simulate the formatting that happens in on_message
     reply_context = """Previous conversation context:
 User: summarize PR #9
-Usefool: Answer: The PR includes changes to replace thinking message with emoji
+BetaBro: Answer: The PR includes changes to replace thinking message with emoji
 
 """
     question = "how many loc"

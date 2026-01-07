@@ -39,11 +39,11 @@ def scrape_wikipedia(url: str) -> str:
         
         # Create Wikipedia API object with increased timeout
         wiki = wikipediaapi.Wikipedia(
-            user_agent='UsefoolBot/1.0 (Discord bot)',
+            user_agent='BetaBroBot/1.0 (Discord bot)',
             language=lang,
             timeout=30.0
         )
-        
+
         # Get the Wikipedia page
         page = wiki.page(title)
         
@@ -147,7 +147,7 @@ def search_wikipedia(query: str, max_results: int = 5, lang: str = 'en') -> str:
         
         # Create Wikipedia API object with increased timeout
         wiki = wikipediaapi.Wikipedia(
-            user_agent='UsefoolBot/1.0 (Discord bot)',
+            user_agent='BetaBroBot/1.0 (Discord bot)',
             language=lang,
             timeout=30.0
         )

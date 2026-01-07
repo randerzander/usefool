@@ -16,7 +16,7 @@ import html2text
 from pyreadability import Readability
 from tools import retriever
 from pathlib import Path
-from utils import create_tool_spec
+from .tool_utils import create_tool_spec
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,15 @@ def read_url(url: str) -> str:
     # Regular web page scraping
     else:
         try:
+            # First do a HEAD request to check content type
+            head_resp = requests.head(url, timeout=5, allow_redirects=True, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
+            content_type = head_resp.headers.get('Content-Type', '').lower()
+            
+            if any(img_type in content_type for img_type in ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']):
+                return f"This URL points to an image ({content_type}). Please use the 'caption_image' tool to analyze it."
+
             response = requests.get(url, timeout=10, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             })
@@ -186,7 +195,7 @@ Video ID: {video_id}"""
             if thumbnail_path:
                 try:
                     import os
-                    from agent import two_round_image_caption, MODEL_CONFIG
+                    from utils import two_round_image_caption, MODEL_CONFIG
                     
                     # Get API key from environment
                     api_key_env = MODEL_CONFIG.get("api_key_env", "OPENROUTER_API_KEY")

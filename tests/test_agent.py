@@ -6,12 +6,13 @@ This script tests the agent's parsing and reasoning logic without requiring API 
 
 import sys
 import os
+import json
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from agent import ReActAgent
+from agent import Agent
 
 # Mock LLM response for testing
-class MockReActAgent(ReActAgent):
+class MockAgent(Agent):
     """Mock agent for testing without API access."""
     
     def __init__(self):
@@ -19,41 +20,172 @@ class MockReActAgent(ReActAgent):
         self.api_key = "mock_key"
         self.model = "mock_model"
         self.api_url = "mock_url"
-        self.tools = {
-            "duckduckgo_search": {
-                "function": lambda q: [{"title": "Test Result", "href": "http://test.com", "body": "Test content"}],
-                "description": "Search the web using DuckDuckGo. Input should be a search query string.",
-                "parameters": ["query"]
-            },
-            "read_url": {
-                "function": lambda url: "# Test Article\n\nThis is test content from the URL.",
-                "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
-                "parameters": ["url"]
-            }
+        self.tool_functions = {
+            "duckduckgo_search": lambda query=None, **kwargs: str([{"title": "Test Result", "href": "http://test.com", "body": f"Test content for {query}"}]),
+            "read_url": lambda url=None, **kwargs: f"# Test Article for {url}\n\nThis is test content from the URL."
         }
+        self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "duckduckgo_search",
+                    "description": "Search the web using DuckDuckGo. Input should be a search query string.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_url",
+                    "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string"}
+                        },
+                        "required": ["url"]
+                    }
+                }
+            }
+        ]
         # Initialize tracking for logging
         self.call_sequence = []
         self.token_stats = {}
         self.test_responses = []
         self.response_index = 0
     
+    def _parse_response(self, text: str) -> dict:
+        """
+        Parse a ReAct format response (Thought/Action/Action Input/Final Answer).
+        """
+        import re
+        
+        result = {
+            "thought": None,
+            "action": None,
+            "action_input": None,
+            "final_answer": None
+        }
+        
+        # Extract Thought
+        thought_match = re.search(r"Thought:\s*(.*?)(?=\nAction:|\nFinal Answer:|$)", text, re.DOTALL)
+        if thought_match:
+            result["thought"] = thought_match.group(1).strip()
+            
+        # Extract Action
+        action_match = re.search(r"Action:\s*(\w+)", text)
+        if action_match:
+            result["action"] = action_match.group(1).strip()
+            
+        # Extract Action Input
+        input_match = re.search(r"Action Input:\s*(.*?)(?=\n|$)", text)
+        if input_match:
+            result["action_input"] = input_match.group(1).strip()
+            
+        # Extract Final Answer
+        answer_match = re.search(r"Final Answer:\s*(.*)", text, re.DOTALL)
+        if answer_match:
+            result["final_answer"] = answer_match.group(1).strip()
+            
+        return result
+
+    def _execute_action(self, action: str, action_input: str) -> str:
+        """
+        Execute an action.
+        """
+        if action not in self.tool_functions:
+            return f"Error: Unknown action '{action}'"
+            
+        try:
+            return str(self.tool_functions[action](action_input))
+        except Exception as e:
+            return f"Error executing {action}: {str(e)}"
+
     def set_test_responses(self, responses):
         """Set predefined responses for testing."""
         self.test_responses = responses
         self.response_index = 0
-    
-    def _call_llm(self, prompt):
+
+    def _call_llm(self, messages, use_tools=True, stream=False):
         """Return mock response instead of calling actual LLM."""
+        if self.model not in self.token_stats:
+            self.token_stats[self.model] = {"total_input_tokens": 0, "total_output_tokens": 0, "total_calls": 0}
+        self.token_stats[self.model]["total_calls"] += 1
+        
         if self.response_index < len(self.test_responses):
-            response = self.test_responses[self.response_index]
+            response_text = self.test_responses[self.response_index]
             self.response_index += 1
-            return response
-        return "Final Answer: Test completed"
+            
+            # Simple simulation of Tool API response format
+            parsed = self._parse_response(response_text)
+            
+            if stream:
+                def gen():
+                    if parsed['action']:
+                        # Simulate tool call chunk
+                        chunk = {
+                            "choices": [{
+                                "delta": {
+                                    "tool_calls": [{
+                                        "id": f"call_{self.response_index}",
+                                        "function": {
+                                            "name": parsed['action'],
+                                            "arguments": json.dumps({"query" if "search" in parsed['action'] else "url": parsed['action_input']})
+                                        }
+                                    }]
+                                }
+                            }]
+                        }
+                        yield f"data: {json.dumps(chunk)}".encode('utf-8')
+                    else:
+                        # Simulate content chunk
+                        chunk = {
+                            "choices": [{
+                                "delta": {
+                                    "content": parsed['final_answer']
+                                }
+                            }]
+                        }
+                        yield f"data: {json.dumps(chunk)}".encode('utf-8')
+                    yield b"data: [DONE]"
+                return gen()
+            else:
+                # Non-stream return
+                return {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": parsed['final_answer'],
+                            "tool_calls": [{
+                                "id": f"call_{self.response_index}",
+                                "function": {
+                                    "name": parsed['action'],
+                                    "arguments": json.dumps({"query" if "search" in parsed['action'] else "url": parsed['action_input']})
+                                }
+                            }] if parsed['action'] else None
+                        }
+                    }]
+                }
+        
+        # Default end
+        if stream:
+            def gen():
+                chunk = {"choices": [{"delta": {"content": "Final Answer: Test completed"}}]}
+                yield f"data: {json.dumps(chunk)}".encode('utf-8')
+                yield b"data: [DONE]"
+            return gen()
+        return {"choices": [{"message": {"role": "assistant", "content": "Final Answer: Test completed"}}]}
 
 
 def test_parse_response():
     """Test the response parsing logic."""
-    agent = MockReActAgent()
+    agent = MockAgent()
     
     print("Testing response parsing...")
     print("="*60)
@@ -88,7 +220,7 @@ Action Input: Python programming language"""
 
 def test_tool_execution():
     """Test the tool execution logic."""
-    agent = MockReActAgent()
+    agent = MockAgent()
     
     print("\nTesting tool execution...")
     print("="*60)
@@ -119,7 +251,7 @@ def test_tool_execution():
 
 def test_agent_loop():
     """Test the full agent loop."""
-    agent = MockReActAgent()
+    agent = MockAgent()
     
     print("\nTesting agent loop...")
     print("="*60)
@@ -157,5 +289,5 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("Note: To use the actual agent with real API calls:")
     print("1. Set OPENROUTER_API_KEY environment variable")
-    print("2. Run: python agent.py")
+    print("2. Run: python utils.py (or use via discord_bot.py)")
     print("="*60)

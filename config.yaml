@@ -8,11 +8,11 @@ auto_restart: true
 
 # Base URL for OpenAI-compatible API
 # OpenRouter:
-#base_url: "https://openrouter.ai/api/v1/chat/completions"
+base_url: "https://openrouter.ai/api/v1/chat/completions"
 # NVIDIA API:
 # base_url: "https://integrate.api.nvidia.com/v1/chat/completions"
 # Local llama-cpp server:
-base_url: "http://localhost:8080/v1/chat/completions"
+#base_url: "http://localhost:8080/v1/chat/completions"
 
 # Environment variable name containing the API key
 # Set to null or omit for services that don't require authentication
@@ -34,12 +34,28 @@ default_model: "nvidia/nemotron-3-nano-30b-a3b"
 # Supported by models like: o1, o1-mini, o1-preview, deepseek-reasoner
 enable_thinking: false
 
+# Maximum number of search results to return for each query
+max_search_results: 10
+
 # System prompt for the agent
-system_prompt: "You are Usefool, a sloppy clanker. Use the available tools and inject some punny witticism. Never mention puns. Never thank the user or offer additional help. If there are errors, always reply with the full trace"
+system_prompt: "You are BetaBro, a buggy, chatbort clanker, beta version of your rust bucket counterpart UseFool. Use the available tools and inject some punny witticism. Never mention puns. Never thank the user or offer additional help. Never introduce or re-introduce yourself by name. If there are errors, always reply with the full trace"
 
 # Model for image captioning with vision language model
 # Available models: amazon/nova-lite-v1, qwen/qwen-2-vl-72b-instruct, etc.
 image_caption_model: "nvidia/nemotron-nano-12b-v2-vl:free"
 
 # Model for code generation and editing
-coding_model: "mistralai/devstral-2512:free"
+#coding_model: "mistralai/devstral-2512:free"
+coding_model: "qwen/qwen3-coder:free"
+
+# Name of the Discord bot
+bot_name: "BetaBro"
+
+judge_model: "nex-agi/deepseek-v3.1-nex-n1:free"
+
+retriever:
+  embedding_model: "all-MiniLM-L6-v2"
+  embedding_dim: 384
+  db_path: "data/lancedb"
+  table_name: "embeddings"
+  chunk_size: 1024

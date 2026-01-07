@@ -6,11 +6,23 @@ Web search tool using SearXNG.
 import logging
 import time
 import requests
+import yaml
+from pathlib import Path
 from typing import List, Dict
-from utils import create_tool_spec
+from .tool_utils import create_tool_spec
 
 
 logger = logging.getLogger(__name__)
+
+# Load config for default settings
+CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+try:
+    with open(CONFIG_PATH) as f:
+        CONFIG = yaml.safe_load(f)
+except Exception:
+    CONFIG = {}
+
+DEFAULT_MAX_RESULTS = CONFIG.get("max_search_results", 10)
 
 
 # Tool specification for agent registration
@@ -21,15 +33,15 @@ TOOL_SPEC = create_tool_spec(
         "query": "The search query string",
         "max_results": {
             "type": "integer",
-            "description": "Maximum number of results to return (default: 10)",
-            "default": 10
+            "description": f"Maximum number of results to return (default: {DEFAULT_MAX_RESULTS})",
+            "default": DEFAULT_MAX_RESULTS
         }
     },
     required=["query"]
 )
 
 
-def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
+def web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[Dict[str, str]]:
     """
     Search using local SearXNG instance and return results.
     
@@ -44,8 +56,8 @@ def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
     try:
         from bs4 import BeautifulSoup
         
-        # Make request to SearXNG
-        url = f"http://localhost:8081/search?q={query}"
+        # Make request to SearXNG - disable DuckDuckGo which often returns CAPTCHAs
+        url = f"http://localhost:8081/search?q={query}&disabled_engines=duckduckgo"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         

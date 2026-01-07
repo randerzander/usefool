@@ -9,7 +9,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from agent import read_file
+from tools.read_file import read_file
 from pathlib import Path
 import tempfile
 
@@ -68,7 +68,7 @@ def test_read_from_subdirectory():
     result = read_file('tests/test_react_agent.py')
     
     if 'Error' not in result:
-        assert 'MockReActAgent' in result, "Should contain test content"
+        assert 'MockAgent' in result, "Should contain test content"
         print(f"✓ Successfully read file from subdirectory ({len(result)} characters)")
     else:
         print(f"Note: {result}")
@@ -142,13 +142,13 @@ def test_directory_not_file():
 
 
 def test_agent_has_read_file_tool():
-    """Test that the ReActAgent has the read_file tool registered."""
+    """Test that the Agent has the read_file tool registered."""
     print("Testing agent tool registration...")
     print("="*60)
     
-    from agent import ReActAgent
+    from utils import Agent
     
-    agent = ReActAgent('test_key')
+    agent = Agent('test_key')
     
     assert 'read_file' in agent.tools, "Agent should have read_file tool"
     assert 'function' in agent.tools['read_file'], "read_file should have a function"
@@ -167,16 +167,16 @@ def test_configurable_base_url():
     print("Testing configurable base_url...")
     print("="*60)
     
-    from agent import ReActAgent, MODEL_CONFIG
+    from utils import Agent, MODEL_CONFIG
     
     # Test default base_url
-    agent1 = ReActAgent('test_key')
+    agent1 = Agent('test_key')
     assert agent1.api_url == MODEL_CONFIG.get('base_url', 'https://openrouter.ai/api/v1/chat/completions')
     print(f"✓ Default base_url: {agent1.api_url}")
     
     # Test custom base_url
     custom_url = 'http://localhost:8080/v1/chat/completions'
-    agent2 = ReActAgent('test_key', base_url=custom_url)
+    agent2 = Agent('test_key', base_url=custom_url)
     assert agent2.api_url == custom_url
     print(f"✓ Custom base_url: {agent2.api_url}")
     
@@ -215,7 +215,7 @@ if __name__ == "__main__":
     print("6. Is properly registered with the ReAct agent")
     print("\nThe base_url configuration:")
     print("1. Can be set in config.yaml")
-    print("2. Can be passed to ReActAgent constructor")
+    print("2. Can be passed to Agent constructor")
     print("3. Defaults to OpenRouter API")
     print("4. Allows using local LLMs or other OpenAI-compatible endpoints")
     print("="*60)

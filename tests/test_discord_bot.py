@@ -13,7 +13,7 @@ import asyncio
 import time
 import json
 from unittest.mock import Mock, patch
-from discord_bot import ReActDiscordBot
+from discord_bot import DiscordBot
 
 
 def test_agent_runs_in_background_thread():
@@ -26,7 +26,7 @@ def test_agent_runs_in_background_thread():
     
     # Mock the Discord client and ReAct agent
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('utils.Agent') as MockAgent:
         
         # Create a mock agent that simulates a long-running operation
         mock_agent_instance = Mock()
@@ -40,7 +40,7 @@ def test_agent_runs_in_background_thread():
         MockAgent.return_value = mock_agent_instance
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         print("✓ Bot created successfully")
         print("✓ Agent.run() method is synchronous (blocks for 2 seconds)")
@@ -107,11 +107,11 @@ def test_intent_detection():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
-         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
+         patch('utils.Agent') as MockAgent, \
+         patch.object(DiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Test case 1: Serious message
         print("\nTest 1: Serious message")
@@ -168,11 +168,11 @@ def test_tldr_addition():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
-         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
+         patch('utils.Agent') as MockAgent, \
+         patch.object(DiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Test case 1: Short response (no TL;DR needed)
         print("\nTest 1: Short response")
@@ -220,12 +220,12 @@ def test_intent_detection_uses_fast_model():
     print("="*60)
     
     with patch('discord_bot.discord.Client'), \
-         patch('discord_bot.ReActAgent'), \
+         patch('utils.Agent'), \
          patch('discord_bot.MODEL_CONFIG', {'intent_detection_model': 'amazon/nova-2-lite-v1:free'}), \
-         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
+         patch.object(DiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Set up mock to return valid JSON
         mock_call_llm.return_value = '{"is_sarcastic": false, "confidence": "high"}'
@@ -258,14 +258,14 @@ def test_channel_history_tool_registration():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('utils.Agent') as MockAgent:
         
         # Create bot instance
         mock_agent_instance = Mock()
         mock_agent_instance.tools = {}
         MockAgent.return_value = mock_agent_instance
         
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         bot.agent.tools = {}  # Reset tools
         
         # Create a mock channel
@@ -304,10 +304,10 @@ async def test_channel_history_async_reading():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent:
+         patch('utils.Agent') as MockAgent:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Create mock messages
         mock_messages = []
@@ -452,11 +452,11 @@ def test_make_response_concise():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
-         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
+         patch('utils.Agent') as MockAgent, \
+         patch.object(DiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Test case 1: Make a long response concise
         print("\nTest 1: Make long response concise")

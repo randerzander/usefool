@@ -9,6 +9,7 @@ import logging
 import yaml
 import requests
 import time
+from .tool_utils import create_tool_spec
 from pathlib import Path
 
 
@@ -21,49 +22,37 @@ with open(CONFIG_PATH) as f:
 
 
 # Tool specifications for agent registration
-WRITE_CODE_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "write_code",
-        "description": "Generate Python code and save it to scratch/. Returns only the filename, not the code itself.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "Description of what the code should do"
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Optional additional context or existing code to modify"
-                },
-                "filename": {
-                    "type": "string",
-                    "description": "Optional filename to save as (default: CODE_{timestamp}.py)"
-                }
-            },
-            "required": ["task"]
+WRITE_CODE_SPEC = create_tool_spec(
+    name="write_code",
+    description="Generate Python code and save it to scratch/. Returns only the filename, not the code itself.",
+    parameters={
+        "task": {
+            "type": "string",
+            "description": "Description of what the code should do"
+        },
+        "context": {
+            "type": "string",
+            "description": "Optional additional context or existing code to modify"
+        },
+        "filename": {
+            "type": "string",
+            "description": "Optional filename to save as (default: CODE_{timestamp}.py)"
         }
-    }
-}
+    },
+    required=["task"]
+)
 
-RUN_CODE_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "run_code",
-        "description": "Execute Python code in an isolated Docker container. If no filename given, executes the most recently created .py file in scratch/.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Optional filename in scratch/ to execute. If not provided, runs the most recently created .py file."
-                }
-            },
-            "required": []
+RUN_CODE_SPEC = create_tool_spec(
+    name="run_code",
+    description="Execute Python code in an isolated Docker container. If no filename given, executes the most recently created .py file in scratch/.",
+    parameters={
+        "filename": {
+            "type": "string",
+            "description": "Optional filename in scratch/ to execute. If not provided, runs the most recently created .py file."
         }
-    }
-}
+    },
+    required=[]
+)
 
 
 def write_code(task: str, context: str = None, filename: str = None) -> str:
@@ -122,8 +111,29 @@ IMPORTANT REQUIREMENTS:
             data["max_tokens"] = CONFIG["max_tokens"]
         
         start_time = time.time()
-        response = requests.post(base_url, headers=headers, json=data, timeout=120)
-        response.raise_for_status()
+        
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.post(base_url, headers=headers, json=data, timeout=120)
+                
+                if response.status_code >= 500 and attempt < max_retries:
+                    logger.warning(f"LLM endpoint returned {response.status_code} (Attempt {attempt + 1}). Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                    
+                response.raise_for_status()
+                break
+            except requests.exceptions.RequestException as e:
+                if attempt == max_retries:
+                    logger.error(f"Code generation failed after {max_retries + 1} attempts: {str(e)}")
+                    raise
+                logger.warning(f"Request error (Attempt {attempt + 1}): {str(e)}. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
         
         result = response.json()
         code = result["choices"][0]["message"]["content"].strip()
@@ -303,7 +313,7 @@ def run_code(filename: str = None) -> dict:
         # Get project root directory
         project_root = Path(__file__).parent.parent.absolute()
         scratch_dir = project_root / "scratch"
-        venv_dir = project_root / ".venv"
+        venv_dir = project_root / "venv"
         
         # Create scratch directory if it doesn't exist
         scratch_dir.mkdir(exist_ok=True)
@@ -368,7 +378,7 @@ def run_code(filename: str = None) -> dict:
                 str(scratch_dir): {'bind': container_scratch, 'mode': 'rw'}
             },
             environment={
-                'PYTHONPATH': str(venv_dir / 'lib' / 'python3.12' / 'site-packages'),
+                'PYTHONPATH': str(venv_dir / 'lib' / 'python3.14' / 'site-packages'),
                 'MPLCONFIGDIR': f'{container_scratch}/.matplotlib',  # Avoid permission errors
                 'HOME': container_scratch,  # Set HOME to writable directory
                 'PATH': f"{python_bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

@@ -13,22 +13,14 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
-from agent import ReActAgent
-from discord_bot import ReActDiscordBot
+from agent import Agent
+from discord_bot import DiscordBot
 
 
 def test_agent_tracking():
-    """
-    Test that the ReAct agent properly tracks LLM calls and tool calls.
-    """
-    print("Testing ReAct agent tracking...")
-    print("="*60)
-    
-    # Create a mock API key
+    """Test that the agent tracks LLM and tool calls."""
     api_key = "test_api_key"
-    
-    # Create agent
-    agent = ReActAgent(api_key)
+    agent = Agent(api_key)
     
     # Test 1: Verify initialization
     print("\nTest 1: Verify tracking initialization")
@@ -80,7 +72,7 @@ def test_llm_call_tracking():
         mock_post.return_value = mock_response
         
         # Create agent and make a call
-        agent = ReActAgent("test_api_key")
+        agent = Agent("test_api_key")
         result = agent._call_llm("Test prompt")
         
         # Test 1: Verify call was tracked
@@ -134,7 +126,7 @@ def test_tool_call_tracking():
         ]
         
         # Create agent
-        agent = ReActAgent("test_api_key")
+        agent = Agent("test_api_key")
         
         # Execute an action
         result = agent._execute_action("duckduckgo_search", "test query")
@@ -173,7 +165,7 @@ def test_discord_bot_query_logging():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
+         patch('discord_bot.Agent') as MockAgent, \
          tempfile.TemporaryDirectory() as tmpdir:
         
         # Create mock agent
@@ -199,7 +191,7 @@ def test_discord_bot_query_logging():
         MockAgent.return_value = mock_agent_instance
         
         # Create bot instance with temporary directory
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Override the QUERY_LOGS_DIR to use temp directory
         bot.QUERY_LOGS_DIR = Path(tmpdir) / "query_logs"
@@ -285,7 +277,7 @@ def test_llm_call_tracking_in_discord_bot():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
+         patch('discord_bot.Agent') as MockAgent, \
          patch('discord_bot.requests.post') as mock_post:
         
         # Mock HTTP response
@@ -297,7 +289,7 @@ def test_llm_call_tracking_in_discord_bot():
         mock_post.return_value = mock_response
         
         # Create bot
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         
         # Make LLM call
         result = bot._call_llm("Test prompt", model="test-model")
@@ -336,7 +328,7 @@ def test_query_log_filename_edge_cases():
     print("="*60)
     
     with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
+         patch('discord_bot.Agent') as MockAgent, \
          tempfile.TemporaryDirectory() as tmpdir:
         
         # Create mock agent
@@ -349,7 +341,7 @@ def test_query_log_filename_edge_cases():
         MockAgent.return_value = mock_agent_instance
         
         # Create bot instance with temporary directory
-        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot = DiscordBot("test_token", "test_api_key")
         bot.QUERY_LOGS_DIR = Path(tmpdir) / "query_logs"
         bot.QUERY_LOGS_DIR.mkdir(exist_ok=True)
         
