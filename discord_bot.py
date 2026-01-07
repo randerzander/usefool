@@ -16,16 +16,18 @@ import subprocess
 import threading
 import fcntl
 import re
+import pty
+import termios
+import struct
 from datetime import datetime
 from pathlib import Path
 from agent import Agent
-from colorama import Fore, Style
 from logging_config import setup_logging
 from utils import CHARS_PER_TOKEN
 from discord_utils import translate_user_mentions, convert_usernames_to_mentions, format_metadata
 
 # Configure logging
-setup_logging()
+console = setup_logging()
 logger = logging.getLogger(__name__)
 
 logging.getLogger('discord.client').setLevel(logging.WARNING)
@@ -79,8 +81,7 @@ class DiscordBot:
     def _register_events(self):
         @self.client.event
         async def on_ready():
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"{Fore.GREEN}[{timestamp}] Bot logged in as {self.client.user} and ready!{Style.RESET_ALL}")
+            logger.info(f"Bot logged in as {self.client.user} and ready!")
 
         @self.client.event
         async def on_message(message):
@@ -97,7 +98,7 @@ class DiscordBot:
             if not question and image_urls: question = "What do you see in this image?"
             
             await self._add_reaction(message, "⏳")
-            print(f"{Fore.RED}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
+            logger.info(f"[USER QUERY] {message.author.display_name}: {question}")
             
             self._reset_query_tracking()
             query_start_time = time.time()
@@ -109,7 +110,7 @@ class DiscordBot:
                 inferred = await self._infer_true_query(question, reply_context)
                 if inferred != question:
                     question = inferred
-                    print(f"{Fore.CYAN}[INFERRED QUERY] {question}{Style.RESET_ALL}")
+                    logger.info(f"[INFERRED QUERY] {question}")
 
             try:
                 self._register_channel_history_tool(message.channel, message.id)
@@ -118,7 +119,7 @@ class DiscordBot:
                 # Automatically caption images to provide context immediately
                 auto_captions = []
                 if image_urls:
-                    print(f"{Fore.YELLOW}[AUTO-CAPTIONING] Processing {len(image_urls)} image(s)...{Style.RESET_ALL}")
+                    logger.info(f"[AUTO-CAPTIONING] Processing {len(image_urls)} image(s)...")
                     from utils import two_round_image_caption
                     for i, url in enumerate(image_urls, 1):
                         try:
@@ -399,7 +400,7 @@ class DiscordBot:
         path = self.QUERY_LOGS_DIR / f"{user_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(path, 'w') as f: json.dump({"message_id": mid, "username": user, "timestamp": datetime.now().isoformat(), "user_query": q, "final_response": resp[:1000], "call_sequence": logs, "token_stats_by_model": m_stats}, f, indent=2)
         for m, s in m_stats.items():
-            print(f"{Fore.CYAN}Model: {m} | Calls: {s['total_calls']} | Tokens: {s['total_input_tokens']}+{s['total_output_tokens']} | {path}{Style.RESET_ALL}")
+            logger.info(f"Model: {m} | Calls: {s['total_calls']} | Tokens: {s['total_input_tokens']}+{s['total_output_tokens']} | {path}")
 
     def run(self): self.client.run(self.token)
 
@@ -407,15 +408,52 @@ class BotRunner:
     def __init__(self): self.process, self.should_run = None, True
     def _read(self):
         try:
-            for l in iter(self.process.stdout.readline, ''):
-                if l and self.should_run: print(l, end='')
-                if self.process.poll() is not None: break
-        except: pass
+            while self.should_run:
+                # Read from the master fd of the PTY
+                try:
+                    data = os.read(self.master_fd, 1024)
+                    if data:
+                        sys.stdout.buffer.write(data)
+                        sys.stdout.buffer.flush()
+                    else:
+                        break
+                except OSError:
+                    break
+        except Exception:
+            pass
     def start_bot(self):
         if self.process: self.stop_bot()
-        print(f"🚀 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting Discord bot...")
+        logger.info(f"Starting Discord bot...")
         env = os.environ.copy(); env["DISCORD_BOT_SUBPROCESS"] = "1"
-        self.process = subprocess.Popen([sys.executable, "-u", str(Path(__file__).absolute())], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+        
+        # Create a pseudo-terminal
+        self.master_fd, self.slave_fd = pty.openpty()
+        
+        # Set slave PTY window size to match parent to prevent wrapping
+        try:
+            # Get parent window size from stdout (if TTY)
+            winsize = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b'\0'*8)
+            # Set slave window size
+            fcntl.ioctl(self.slave_fd, termios.TIOCSWINSZ, winsize)
+        except Exception:
+            # Ignore if not running in a real TTY
+            pass
+        
+        # Run subprocess attached to the PTY
+        self.process = subprocess.Popen(
+            [sys.executable, "-u", str(Path(__file__).absolute())],
+            stdout=self.slave_fd,
+            stderr=self.slave_fd, # Merge stderr into stdout via PTY
+            stdin=self.slave_fd,
+            text=False,
+            bufsize=0,
+            env=env,
+            close_fds=True
+        )
+        
+        # Close slave fd in parent so we get EOF when child closes it
+        os.close(self.slave_fd)
+        
         threading.Thread(target=self._read, daemon=True).start()
     def stop_bot(self):
         if self.process and self.process.poll() is None:
@@ -436,11 +474,11 @@ class BotRestartHandler(FileSystemEventHandler):
         if event.is_directory or any(x in str(Path(event.src_path).resolve()) for x in ['/scratch/', '/data/', '/web/']): return
         if event.src_path.endswith(('.py', '.yaml', '.yml')):
             if time.time() - self.last >= self.debounce:
-                print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Restarting due to {event.src_path}...")
+                logger.info(f"Restarting due to {event.src_path}...")
                 self.last = time.time(); self.callback()
 
 def run_with_auto_restart():
-    print("🤖 Discord Bot with Auto-Restart Enabled\n")
+    logger.info("Discord Bot with Auto-Restart Enabled")
     runner = BotRunner()
     obs = Observer()
     obs.schedule(BotRestartHandler(runner.restart_bot), str(Path.cwd()), recursive=True)
@@ -450,17 +488,17 @@ def run_with_auto_restart():
         while runner.should_run:
             time.sleep(1)
             if runner.process and runner.process.poll() is not None and runner.process.poll() != 0:
-                print("\n⚠️  Bot crashed. Restarting..."); time.sleep(2); runner.restart_bot()
+                logger.warning("Bot crashed. Restarting..."); time.sleep(2); runner.restart_bot()
     except KeyboardInterrupt:
         runner.should_run = False; runner.stop_bot(); obs.stop()
     obs.join()
 
 def main():
     token_file = ".bot_token"
-    if not os.path.exists(token_file): return print("ERROR: .bot_token missing")
+    if not os.path.exists(token_file): return logger.error("ERROR: .bot_token missing")
     with open(token_file, 'r') as f: token = f.read().strip()
     api_key = os.getenv(CONFIG.get("api_key_env", "OPENROUTER_API_KEY"))
-    if not api_key: return print("ERROR: API key missing")
+    if not api_key: return logger.error("ERROR: API key missing")
     if CONFIG.get("auto_restart", True) and not os.environ.get("DISCORD_BOT_SUBPROCESS"): run_with_auto_restart()
     else: DiscordBot(token, api_key).run()
 

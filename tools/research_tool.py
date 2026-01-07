@@ -38,4 +38,4 @@ def deep_research(query: str) -> str:
     summary_res = research_agent._call_llm([{"role": "user", "content": f"Summarize in 3 sentences: {final_md}"}], use_tools=False)
     tldr = summary_res["choices"][0]["message"]["content"].strip()
     
-    return f"**Summary:** {tldr}\n\n**Full Interactive Report:** {litter_url}\n*(Link valid for 72 hours)*"
+    return f"**Summary:** {tldr}\n\n[Full Interactive Report]({litter_url})"

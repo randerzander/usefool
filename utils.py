@@ -11,6 +11,8 @@ import logging
 import time
 import yaml
 import requests
+import threading
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -112,11 +114,52 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
             ]
         }
         
-        # Explicit logging for VLM API call
-        logger.info(f"VLM LLM Call: model={model}, base_url={base_url}")
+        # Manual spinner implementation to match agent.py
+        stop_spinner = threading.Event()
+        start_time = time.time()
         
-        response = requests.post(base_url, headers=headers, json=data, timeout=60)
+        def spin():
+            frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            i = 0
+            while not stop_spinner.is_set():
+                frame = frames[i % len(frames)]
+                elapsed = time.time() - start_time
+                
+                # Format message - shorten model for cleaner display
+                short_model = model.split('/')[-1] if '/' in model else model
+                msg = f"VLM Call | {short_model} | {elapsed:.1f}s"
+                
+                # Use stdout with ANSI clear + return to force single line update
+                sys.stdout.write(f"\x1b[2K\r{frame} {msg}")
+                sys.stdout.flush()
+                
+                time.sleep(0.1)
+                i += 1
+                
+        spinner_thread = None
+        # Only run spinner if likely interactive, otherwise fallback to log
+        if sys.stdout.isatty():
+            spinner_thread = threading.Thread(target=spin)
+            spinner_thread.daemon = True
+            spinner_thread.start()
+        else:
+            logger.info(f"VLM LLM Call: model={model}")
+        
+        try:
+            response = requests.post(base_url, headers=headers, json=data, timeout=60)
+        finally:
+            if spinner_thread:
+                stop_spinner.set()
+                spinner_thread.join()
+                # Clear the line
+                sys.stdout.write("\x1b[2K\r")
+                sys.stdout.flush()
+        
         response.raise_for_status()
+        
+        # Log completion with time
+        total_time = time.time() - start_time
+        logger.info(f"VLM call completed | Status: {response.status_code} | Time: {total_time:.2f}s")
         
         result = response.json()
         return result["choices"][0]["message"]["content"]

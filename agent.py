@@ -9,10 +9,13 @@ import logging
 import time
 import requests
 import traceback
+import threading
+import sys
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Callable
 
 from utils import MODEL_CONFIG, CHARS_PER_TOKEN
+from logging_config import console
 import tools
 
 logger = logging.getLogger(__name__)
@@ -171,10 +174,45 @@ class Agent:
         retry_delay = 2
         for attempt in range(max_retries + 1):
             try:
-                logger.info(f"LLM Call Attempt {attempt + 1} | Model: {self.model}")
+                # Manual spinner implementation to ensure single-line updates
+                # rich.console.status can sometimes spam newlines in certain environments
+                stop_spinner = threading.Event()
                 
-                response = requests.post(self.api_url, headers=headers, json=data, timeout=None)
+                def spin():
+                    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                    i = 0
+                    start = time.time()
+                    while not stop_spinner.is_set():
+                        frame = frames[i % len(frames)]
+                        elapsed = time.time() - start
+                        
+                        # Format message
+                        msg = f"LLM Call Attempt {attempt + 1} | Model: {self.model} | {elapsed:.1f}s"
+                        
+                        # Use stdout to match the logs
+                        # Use ANSI clear line (\x1b[2K) + return (\r) to force single line update
+                        sys.stdout.write(f"\x1b[2K\r{frame} {msg}")
+                        sys.stdout.flush()
+                        
+                        time.sleep(0.1)
+                        i += 1
+                        
+                spinner_thread = None
+                if self.enable_logging:
+                    spinner_thread = threading.Thread(target=spin)
+                    spinner_thread.daemon = True
+                    spinner_thread.start()
                 
+                try:
+                    response = requests.post(self.api_url, headers=headers, json=data, timeout=None)
+                finally:
+                    if spinner_thread:
+                        stop_spinner.set()
+                        spinner_thread.join()
+                        # Clear the line fully
+                        sys.stdout.write("\x1b[2K\r")
+                        sys.stdout.flush()
+
                 if response.status_code == 429 and attempt < max_retries:
                     logger.warning(f"Rate limited (429). Retrying in {retry_delay}s...")
                     time.sleep(retry_delay)
@@ -239,7 +277,7 @@ class Agent:
                     iteration_callback(iteration)
 
                 # Store iteration info to print with tool calls
-                current_iter_str = f"\n{status_prefix} Iteration {iteration + 1}/{max_iterations}" if status_prefix else f"\nIteration {iteration + 1}/{max_iterations}"
+                current_iter_str = f"{status_prefix} Iteration {iteration + 1}/{max_iterations}" if status_prefix else f"Iteration {iteration + 1}/{max_iterations}"
 
                 result = self._call_llm(messages, use_tools=True, tools_override=active_tools)
                 message = result["choices"][0]["message"]
@@ -250,7 +288,7 @@ class Agent:
                     full_response += content
 
                 if content and not tool_calls and verbose:
-                    print(f"{current_iter_str} | Final Response")
+                    logger.info(f"{current_iter_str} | Final Response")
 
                 if tool_calls:
                     messages.append(message)
@@ -260,9 +298,7 @@ class Agent:
                             function_args = json.loads(tool_call["function"]["arguments"])
                             
                             if verbose:
-                                print(f"{current_iter_str} | Tool Call: {function_name} | Arguments: {json.dumps(function_args)}")
-                            
-                            logger.info(f"Tool Call: {function_name} with args: {json.dumps(function_args)}")
+                                logger.info(f"{current_iter_str} | Tool Call: {function_name} | Arguments: {json.dumps(function_args)}")
                             
                             tool_start_time = time.time()
                             result_content = self.tool_functions[function_name](**function_args)
@@ -278,9 +314,8 @@ class Agent:
                             if self.on_tool_call:
                                 self.on_tool_call(function_name, function_args, result_content_str, tool_runtime)
 
-                            logger.info(f"Tool Result from {function_name} ({round(tool_runtime, 2)}s): {result_content_str[:200]}...")
                             if verbose:
-                                print(f"{current_iter_str} | Tool Result: {result_content_str[:100].replace(chr(10), ' ')}... ({round(tool_runtime, 2)}s)")
+                                logger.info(f"{current_iter_str} | Tool Result: {result_content_str[:100].replace(chr(10), ' ')}... ({round(tool_runtime, 2)}s)")
                                 
                             self.call_sequence.append({
                                 "type": "tool_call",

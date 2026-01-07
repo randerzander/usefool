@@ -46,7 +46,7 @@ async def convert_usernames_to_mentions(text: str, guild: discord.Guild) -> str:
         # We escape the display name to handle special regex characters
         escaped_name = re.escape(display_name)
         # Match @ followed by the display name, ensuring it's not followed by more word characters
-        pattern = re.compile(f'@{{escaped_name}}(?!\\w)')
+        pattern = re.compile(f'@{escaped_name}(?!\\w)')
         result = pattern.sub(member.mention, result)
         
     return result
@@ -56,7 +56,7 @@ def format_metadata(token_stats: Dict[str, Any], duration: float, tool_counts: D
     Format query execution metadata for inclusion in the response.
     """
     if not token_stats:
-        return f"\n\n_Ref: {duration:.1f}s_"
+        return f"\n\n-# _Ref: {duration:.1f}s_"
         
     stats_parts = []
     
@@ -73,6 +73,6 @@ def format_metadata(token_stats: Dict[str, Any], duration: float, tool_counts: D
         active_tools = sorted([(n, c) for n, c in tool_counts.items() if c > 0], key=lambda x: x[1], reverse=True)
         if active_tools:
             tools_list = [f"{name}({count})" for name, count in active_tools]
-            tools_str = " | Tools: ".join(tools_list)
+            tools_str = " | Tools: " + ", ".join(tools_list)
         
-    return f"\n\n_Ref: {' | '.join(stats_parts)} | {duration:.1f}s{tools_str}_"
+    return f"\n\n-# *{' | '.join(stats_parts)} | {duration:.1f}s{tools_str}*"

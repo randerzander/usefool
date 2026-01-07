@@ -34,7 +34,7 @@ def generate_html_report(query: str, scratch_dir: Path = Path("scratch")) -> Opt
 
     # Read sub-questions
     subquestions = []
-    with open(subq_file, "r") as f:
+    with open(subq_file, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip(): subquestions.append(json.loads(line))
     subquestions.sort(key=lambda x: x.get("order", 999))
@@ -42,7 +42,7 @@ def generate_html_report(query: str, scratch_dir: Path = Path("scratch")) -> Opt
     # Read sub-answers
     subanswers = {}
     if subans_file.exists():
-        with open(subans_file, "r") as f:
+        with open(subans_file, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     try:
@@ -56,7 +56,7 @@ def generate_html_report(query: str, scratch_dir: Path = Path("scratch")) -> Opt
                     except: pass
 
     # Read final synthesized answer
-    with open(final_file, "r") as f: 
+    with open(final_file, "r", encoding="utf-8") as f: 
         final_md = f.read()
     final_html = markdown.markdown(final_md, extensions=['tables', 'fenced_code'])
 
@@ -82,7 +82,7 @@ def generate_html_report(query: str, scratch_dir: Path = Path("scratch")) -> Opt
     # Full HTML Template
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     html_template = """<!DOCTYPE html>
-<html><head><title>Research Report</title><style>
+<html><head><meta charset="utf-8"><title>Research Report</title><style>
 body { font-family: sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f9f9f9; }
 .container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
 .plan { background: #f0f7ff; padding: 20px; border-radius: 6px; border-left: 4px solid #3498db; margin-bottom: 40px; }
@@ -112,7 +112,7 @@ function toggleAnswer(order) {
     final_html_page = final_html_page.replace("{{PLAN_ITEMS}}", plan_items_html)
     final_html_page = final_html_page.replace("{{FINAL_HTML}}", final_html)
     
-    with open(report_file, "w") as f: 
+    with open(report_file, "w", encoding="utf-8") as f: 
         f.write(final_html_page)
     
     return report_file

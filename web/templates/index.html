@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BetaBro Web</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 20px;
+            background-color: #f4f4f9;
+            margin: 0;
+        }
+        .container {
+            width: 95%;
+            max-width: 1200px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-top: 0;
+            text-align: center;
+        }
+        form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .layout {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 100%;
+        }
+        .research-plan-section {
+            width: 100%;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 15px;
+        }
+        .report-section {
+            width: 100%;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            background-color: #3498db;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        #result {
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background-color: #fafafa;
+            min-height: 100px;
+            line-height: 1.6;
+            color: #34495e;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #plan-list {
+            list-style: none;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .plan-item {
+            padding: 12px 15px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            font-size: 14px;
+            background-color: #f9f9f9;
+            color: #333;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .plan-item:hover {
+            border-color: #3498db;
+            background-color: #f0f7ff;
+        }
+        .plan-item.active {
+            background-color: #e8f4fd;
+            border-color: #3498db;
+            color: #2980b9;
+            font-weight: bold;
+            box-shadow: 0 0 5px rgba(52, 152, 219, 0.3);
+        }
+        .plan-item .rank {
+            font-weight: bold;
+            color: #3498db;
+            margin-right: 8px;
+        }
+        .subq-answer {
+            margin-top: 10px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 6px;
+            border-left: 3px solid #3498db;
+            font-size: 13px;
+            font-weight: normal;
+            color: #444;
+            display: none;
+        }
+        .sources {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .sources ul {
+            margin: 5px 0 0 0;
+            padding-left: 20px;
+            list-style-type: square;
+        }
+        .sources li {
+            word-break: break-all;
+            margin-bottom: 3px;
+        }
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .thinking {
+            color: #7f8c8d;
+            font-style: italic;
+            margin-bottom: 10px;
+        }
+        /* Markdown Styling (from server-rendered HTML) */
+        .rendered-markdown h1, .rendered-markdown h2, .rendered-markdown h3 { color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .rendered-markdown p { margin-bottom: 1em; }
+        .rendered-markdown code { background: #f8f9fa; padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+        .rendered-markdown pre { background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #eee; }
+        .rendered-markdown img { max-width: 100%; }
+        .rendered-markdown table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
+        .rendered-markdown th, .rendered-markdown td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .rendered-markdown th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body hx-ext="sse">
+    <div class="container">
+        <h1>BetaBro Web Interface</h1>
+        <form hx-post="/query" hx-target="#sse-trigger" hx-swap="innerHTML">
+            <div style="display: flex; flex-direction: column; width: 100%; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" name="textbox" placeholder="Ask BetaBro something..." required style="flex-grow: 1;">
+                    <button type="submit">Submit</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: #666;">
+                    <label for="agent_type">Agent Mode:</label>
+                    <select name="agent_type" id="agent_type" style="padding: 5px; border-radius: 4px; border: 1px solid #ddd;">
+                        <option value="research" selected>Research Agent (Comprehensive)</option>
+                        <option value="standard">Standard Agent (Fast)</option>
+                    </select>
+                </div>
+            </div>
+        </form>
+        
+        <div id="sse-trigger"></div>
+        
+        <div class="layout">
+            <div class="research-plan-section">
+                <h3>Research Plan</h3>
+                <ul id="plan-list">
+                    <li class="plan-item" style="color: #999;">No active research plan.</li>
+                </ul>
+            </div>
+            
+            <div class="report-section">
+                <h3>Report Output</h3>
+                <div id="result" class="rendered-markdown">
+                    <!-- Response will appear here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleSubAnswer(order) {
+            const answerDiv = document.getElementById(`subq-answer-${order}`);
+            if (answerDiv) {
+                const isHidden = answerDiv.style.display === 'none';
+                answerDiv.style.display = isHidden ? 'block' : 'none';
+                answerDiv.setAttribute('data-state', isHidden ? 'expanded' : 'collapsed');
+            }
+        }
+
+        // Dedicated listener for the final report event
+        document.body.addEventListener('htmx:sseFinalReport', function (evt) {
+            console.log("[SSE] Final report event received. Closing connection...");
+            const sseElement = document.querySelector('[sse-connect]');
+            if (sseElement && sseElement.sseSource) {
+                sseElement.sseSource.close();
+            }
+        });
+
+        // Handle auto-collapse logic after swaps
+        document.body.addEventListener('htmx:oobAfterSwap', function (evt) {
+            const targetId = evt.detail.target.id;
+            const targetEl = evt.detail.target;
+            
+            // Auto-collapse trigger
+            if (targetId === 'result') {
+                // If it's not a 'thinking' block, it's the final synthesized report
+                if (!targetEl.querySelector('.thinking')) {
+                    console.log("[UI] Final report ready. Collapsing all sub-answers...");
+                    document.querySelectorAll('.subq-answer').forEach(el => {
+                        el.style.display = 'none';
+                        el.setAttribute('data-state', 'collapsed');
+                    });
+                    document.querySelectorAll('.plan-item').forEach(el => {
+                        el.classList.remove('active');
+                    });
+                }
+            }
+        });
+
+        // Reset UI on new query
+        document.body.addEventListener('htmx:beforeRequest', function (evt) {
+            if (evt.detail.target.id === 'sse-trigger') {
+                document.getElementById('plan-list').innerHTML = '<li class="plan-item" style="color: #999;">Generating research plan...</li>';
+                document.getElementById('result').innerHTML = '<div class="thinking"><div class="spinner"></div> Preparing...</div>';
+            }
+        });
+    </script>
+</body>
+</html>
