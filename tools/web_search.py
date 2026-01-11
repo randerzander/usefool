@@ -33,29 +33,19 @@ def _run_pysearx_search(query: str, max_results: int) -> List[Dict]:
     Run pysearx search in a way that's safe for both sync and async contexts.
     This isolates the threading done by pysearx from the caller's context.
     
-    Only uses engines that don't have playwright/greenlet conflicts:
-    - DuckDuckGoAPIEngine: Fast API-based search (no browser needed)
-    - BraveEngine: Fast, reliable API-based search
-    - MojeekEngine: Privacy-focused, HTML scraping
-    - YahooEngine: Good quality results
+    Uses pysearx's DEFAULT_ENGINES which are configured for reliability:
+    - DuckDuckGoAPIEngine: 100% reliable, fast, API-based (always enabled)
+    - YahooEngine: 100% reliable, fast HTML scraping (always enabled)
+    - MojeekEngine: 100% reliable, privacy-focused (always enabled)
+    - BraveEngine: Auto-enabled when PROXY_FILE env var is set
+    
+    All default engines are thread-safe (no Playwright/greenlet issues).
     """
     from pysearx import search
-    from pysearx.engines.duckduckgo_api import DuckDuckGoAPIEngine
-    from pysearx.engines.brave import BraveEngine
-    from pysearx.engines.mojeek import MojeekEngine
-    from pysearx.engines.yahoo import YahooEngine
     
-    # Use only engines that don't have playwright/greenlet issues
-    safe_engines = [
-        DuckDuckGoAPIEngine(),
-        BraveEngine(),
-        MojeekEngine(),
-        YahooEngine(),
-    ]
-    
-    # Use parallel=True since we're already isolated in an executor
-    # and these engines don't use playwright
-    return search(query, engines=safe_engines, max_results=max_results, parallel=True)
+    # Use library defaults - they're optimized and thread-safe
+    # BraveEngine automatically enabled if PROXY_FILE is set
+    return search(query, max_results=max_results, parallel=True)
 
 
 # Tool specification for agent registration
