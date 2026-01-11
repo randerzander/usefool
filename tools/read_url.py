@@ -25,6 +25,114 @@ from .tool_utils import create_tool_spec
 logger = logging.getLogger(__name__)
 
 
+def _scrape_with_playwright(url: str) -> str:
+    """
+    Fallback scraper using Playwright for sites that block requests.
+    Uses a real browser to render JavaScript and bypass bot detection.
+    
+    Args:
+        url: URL to scrape
+        
+    Returns:
+        Markdown content of the page
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        logger.info(f"Using Playwright to scrape {url}")
+        
+        with sync_playwright() as p:
+            # Launch browser in headless mode
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = context.new_page()
+            
+            # Navigate to URL with timeout
+            page.goto(url, wait_until='networkidle', timeout=30000)
+            
+            # Wait for body to be visible
+            page.wait_for_selector('body', timeout=10000)
+            
+            # Get the full HTML content
+            html_content = page.content()
+            
+            # Extract title
+            page_title = page.title()
+            
+            browser.close()
+        
+        # Use pyreadability to parse the HTML
+        reader = Readability(html_content)
+        result = reader.parse()
+        
+        if not result or not result.get('content'):
+            # If readability fails, try to get article/main content directly
+            logger.warning(f"Readability failed, attempting direct content extraction")
+            
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+                page = context.new_page()
+                page.goto(url, wait_until='networkidle', timeout=30000)
+                page.wait_for_selector('body', timeout=10000)
+                
+                # Try to find main content using common selectors
+                selectors = ['article', 'main', '[role="main"]', '.article-body', '.post-content', '#content']
+                content_html = None
+                
+                for selector in selectors:
+                    try:
+                        element = page.query_selector(selector)
+                        if element:
+                            content_html = element.inner_html()
+                            logger.debug(f"Found content using selector: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if not content_html:
+                    # Fallback to body
+                    content_html = page.query_selector('body').inner_html()
+                
+                browser.close()
+            
+            # Convert to markdown
+            h = html2text.HTML2Text()
+            h.body_width = 0
+            h.ignore_links = False
+            markdown_content = h.handle(content_html)
+            
+            if page_title:
+                markdown_content = f"# {page_title}\n\n{markdown_content}"
+            
+        else:
+            # Convert to markdown
+            h = html2text.HTML2Text()
+            h.body_width = 0
+            h.ignore_links = False
+            markdown_content = h.handle(result['content'])
+            
+            # Add title if available
+            if result.get('title'):
+                markdown_content = f"# {result['title']}\n\n{markdown_content}"
+            elif page_title:
+                markdown_content = f"# {page_title}\n\n{markdown_content}"
+        
+        logger.info(f"Successfully scraped {url} using Playwright ({len(markdown_content)} chars)")
+        return markdown_content
+        
+    except ImportError:
+        logger.error("Playwright not installed. Install with: pip install playwright && playwright install chromium")
+        return "Error: Playwright not available. Cannot bypass site restrictions."
+    except Exception as e:
+        logger.error(f"Playwright scraping failed for {url}: {str(e)}")
+        return f"Error: Playwright scraping failed: {str(e)}"
+
+
 # Tool specification for agent registration
 TOOL_SPEC = create_tool_spec(
     name="read_url",
@@ -107,32 +215,51 @@ def read_url(url: str, query: str = None) -> str:
             if 'application/pdf' in content_type or url.lower().endswith('.pdf'):
                 content = _scrape_pdf_url(url)
             else:
-                response = requests.get(url, timeout=10, headers=headers)
-                response.raise_for_status()
-                logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
-                
-                # Use pyreadability to parse HTML and extract main content
-                reader = Readability(response.text)
-                result = reader.parse()
-                
-                if not result:
-                    logger.warning(f"Readability failed to parse content from {url}")
-                    return f"Error: Failed to parse content from {url}. The page might be empty or not contain extractable text."
-                
-                # Convert HTML content to markdown using html2text
-                h = html2text.HTML2Text()
-                h.body_width = 0  # Don't wrap lines
-                h.ignore_links = False
-                markdown_content = h.handle(result['content'])
-                
-                # Add title if available
-                if result.get('title'):
-                    markdown_content = f"# {result['title']}\n\n{markdown_content}"
-                
-                content = markdown_content
+                try:
+                    response = requests.get(url, timeout=10, headers=headers)
+                    response.raise_for_status()
+                    logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
+                    
+                    # Use pyreadability to parse HTML and extract main content
+                    reader = Readability(response.text)
+                    result = reader.parse()
+                    
+                    if not result:
+                        logger.warning(f"Readability failed to parse content from {url}")
+                        return f"Error: Failed to parse content from {url}. The page might be empty or not contain extractable text."
+                    
+                    # Convert HTML content to markdown using html2text
+                    h = html2text.HTML2Text()
+                    h.body_width = 0  # Don't wrap lines
+                    h.ignore_links = False
+                    markdown_content = h.handle(result['content'])
+                    
+                    # Add title if available
+                    if result.get('title'):
+                        markdown_content = f"# {result['title']}\n\n{markdown_content}"
+                    
+                    content = markdown_content
+                    
+                except requests.exceptions.HTTPError as e:
+                    # Check if it's a blocking error (403, 429, etc.)
+                    if e.response.status_code in [403, 429, 503]:
+                        logger.warning(f"Got {e.response.status_code} error, trying Playwright fallback")
+                        content = _scrape_with_playwright(url)
+                    else:
+                        raise
+                        
         except Exception as e:
-            logger.error(f"URL scraping failed for {url}: {str(e)}")
-            return f"Error scraping URL: {str(e)}"
+            # If it's not a handled error, check if we should try Playwright
+            if 'Forbidden' in str(e) or '403' in str(e):
+                logger.warning(f"URL scraping failed with blocking error, trying Playwright: {str(e)}")
+                try:
+                    content = _scrape_with_playwright(url)
+                except Exception as playwright_error:
+                    logger.error(f"Playwright fallback also failed: {str(playwright_error)}")
+                    return f"Error scraping URL: {str(e)}. Playwright fallback also failed: {str(playwright_error)}"
+            else:
+                logger.error(f"URL scraping failed for {url}: {str(e)}")
+                return f"Error scraping URL: {str(e)}"
     
     # Write to vector database if content was successfully fetched
     if content and not content.startswith("Error"):
