@@ -85,8 +85,9 @@ def web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[Dict[
     try:
         from pysearx import search
         
-        # Use pysearx with parallel mode for faster results
-        raw_results = search(query, max_results=max_results, parallel=True)
+        # Use pysearx in sequential mode to avoid threading conflicts with Discord
+        # parallel=False is safer in async environments like Discord bot
+        raw_results = search(query, max_results=max_results, parallel=False)
         
         logger.debug(f"pysearx response - Results: {len(raw_results)}")
         
