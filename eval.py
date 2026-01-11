@@ -8,6 +8,7 @@ from openai import OpenAI
 from pathlib import Path
 from agent import Agent
 from colorama import Fore, Style
+from utils import is_localhost, get_model_for_api
 
 # Load config
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
@@ -31,15 +32,8 @@ def judge_answer(question: str, expected_answer: str, agent_response: str) -> di
         base_url=base_url
     )
     
-    # Auto-detect model from localhost or use configured model
-    if "localhost" in base_url or "127.0.0.1" in base_url:
-        try:
-            models = client.models.list()
-            model = models.data[0].id if models.data else CONFIG.get("default_model", "gpt-3.5-turbo")
-        except:
-            model = CONFIG.get("default_model", "gpt-3.5-turbo")
-    else:
-        model = CONFIG.get("default_model", "gpt-3.5-turbo")
+    # Use shared utility to get model
+    model = get_model_for_api(base_url, api_key, CONFIG.get("default_model", "gpt-3.5-turbo"))
     
     judge_prompt = f"""
 EXPECTED: {expected_answer}
@@ -91,10 +85,7 @@ async def main():
     
     # Pass model=None for localhost to trigger auto-detection in Agent
     # For remote APIs, get from config
-    if "localhost" in base_url or "127.0.0.1" in base_url:
-        model = None  # Let Agent auto-detect from /v1/models
-    else:
-        model = CONFIG.get("default_model", "gpt-3.5-turbo")
+    model = None if is_localhost(base_url) else CONFIG.get("default_model", "gpt-3.5-turbo")
     
     # Don't strip base_url for agent - it expects the full path
     agent = Agent(api_key=api_key, model=model, base_url=base_url)

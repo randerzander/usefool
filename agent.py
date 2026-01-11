@@ -14,11 +14,18 @@ import sys
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Callable
 
-from utils import MODEL_CONFIG, CHARS_PER_TOKEN
+from utils import MODEL_CONFIG, CHARS_PER_TOKEN, is_localhost, get_model_from_api
 from logging_config import console
 import tools
 
 logger = logging.getLogger(__name__)
+
+# Thread-local storage for current user query (accessible by tools)
+_current_query = threading.local()
+
+def get_current_user_query() -> Optional[str]:
+    """Get the current user query from thread-local storage."""
+    return getattr(_current_query, 'value', None)
 
 class Agent:
     """
@@ -36,8 +43,8 @@ class Agent:
         self.api_url = base_url if base_url is not None else MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
         if model is None:
-            if self._is_localhost(self.api_url):
-                detected_model = self._get_model_from_api()
+            if is_localhost(self.api_url):
+                detected_model = get_model_from_api(self.api_url, self.api_key)
                 if detected_model:
                     self.model = detected_model
                     if enable_logging:
@@ -61,15 +68,30 @@ class Agent:
         self.tool_functions = tools.get_tool_functions()
         self.tools = tools.get_tool_specs()
         
+        # Detect vision capabilities and context length for localhost models
+        self.supports_vision = False
+        self.context_length = 32768  # Default
+        if is_localhost(self.api_url):
+            self.supports_vision = self._detect_vision_support()
+            self.context_length = self._detect_context_length()
+            if enable_logging:
+                if self.supports_vision:
+                    logger.info(f"Model supports vision/image input")
+                logger.info(f"Model context length: {self.context_length:,} tokens")
+            
+            # Make context length available to tools
+            tools.set_context_length(self.context_length)
+        
         # Callback for tool call interception (used by ResearchAgent)
         self.on_tool_call: Optional[Callable[[str, Dict[str, Any], Any, float], None]] = None
         
         self._initialize_tracking() 
     
-    def _is_localhost(self, url: str) -> bool:
-        return "localhost" in url or "127.0.0.1" in url
-    
-    def _get_model_from_api(self) -> Optional[str]:
+    def _detect_vision_support(self) -> bool:
+        """
+        Detect if the model supports vision/image input by checking the /models endpoint.
+        llama.cpp servers expose model metadata that indicates vision capabilities.
+        """
         try:
             if "/chat/completions" in self.api_url:
                 models_url = self.api_url.replace("/chat/completions", "/models")
@@ -85,19 +107,87 @@ class Agent:
             response = requests.get(models_url, headers=headers, timeout=5)
             response.raise_for_status()
             data = response.json()
+            
+            # Check for llama.cpp style models endpoint (has both "models" and "data")
+            models_list = data.get("models", [])
+            if models_list and len(models_list) > 0:
+                model_info = models_list[0]
+                # Check capabilities field (llama.cpp specific)
+                capabilities = model_info.get("capabilities", [])
+                if "multimodal" in capabilities:
+                    return True
+            
+            # Check if there's model metadata indicating vision support
             models = data.get("data", []) if "data" in data else [data] if isinstance(data, dict) else data
             
             if models and len(models) > 0:
-                model = models[0]
-                if isinstance(model, dict):
-                    model_id = model.get("id") or model.get("name") or model.get("model")
-                    if model_id and model_id.endswith(".gguf"):
-                        model_id = model_id[:-5]
-                    return model_id
-            return None
+                model_info = models[0]
+                if isinstance(model_info, dict):
+                    # Check for vision-related metadata
+                    # llama.cpp may expose this in different ways
+                    metadata = model_info.get("metadata", {})
+                    
+                    # Check common indicators
+                    if metadata.get("vision", False):
+                        return True
+                    if metadata.get("multimodal", False):
+                        return True
+                    if "vision" in str(metadata).lower():
+                        return True
+                    
+                    # Check model ID for vision-related keywords
+                    model_id = model_info.get("id", "") or model_info.get("name", "") or ""
+                    vision_keywords = ["vision", "vl", "visual", "minicpm", "qwen", "llava", "bakllava"]
+                    if any(keyword in model_id.lower() for keyword in vision_keywords):
+                        return True
+            
+            return False
+            
         except Exception as e:
-            logger.warning(f"Failed to auto-detect model from API: {e}")
-            return None
+            logger.debug(f"Vision detection failed: {e}")
+            return False
+    
+    def _detect_context_length(self) -> int:
+        """
+        Detect the model's context length by checking the /models endpoint.
+        Returns context length in tokens, or default of 32768 if detection fails.
+        """
+        try:
+            if "/chat/completions" in self.api_url:
+                models_url = self.api_url.replace("/chat/completions", "/models")
+            elif self.api_url.endswith("/v1"):
+                models_url = f"{self.api_url}/models"
+            else:
+                models_url = f"{self.api_url}/v1/models"
+            
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            response = requests.get(models_url, headers=headers, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Check data field for metadata
+            models = data.get("data", [])
+            if models and len(models) > 0:
+                model_info = models[0]
+                if isinstance(model_info, dict):
+                    metadata = model_info.get("meta", {})
+                    
+                    # Check for n_ctx_train (training context length)
+                    if "n_ctx_train" in metadata:
+                        ctx_len = metadata["n_ctx_train"]
+                        logger.debug(f"Detected context length from n_ctx_train: {ctx_len}")
+                        return ctx_len
+            
+            # Default to 32k if not found
+            logger.debug("Could not detect context length, using default 32768")
+            return 32768
+            
+        except Exception as e:
+            logger.debug(f"Context length detection failed: {e}, using default 32768")
+            return 32768
     
     def _initialize_tracking(self):
         self.call_sequence = []
@@ -186,8 +276,8 @@ class Agent:
                         frame = frames[i % len(frames)]
                         elapsed = time.time() - start
                         
-                        # Format message
-                        msg = f"LLM Call Attempt {attempt + 1} | Model: {self.model} | {elapsed:.1f}s"
+                        # Format message with input tokens
+                        msg = f"LLM Call Attempt {attempt + 1} | Model: {self.model} | {input_tokens} tokens in | {elapsed:.1f}s"
                         
                         # Use stdout to match the logs
                         # Use ANSI clear line (\x1b[2K) + return (\r) to force single line update
@@ -232,7 +322,11 @@ class Agent:
                     output_text += str(message["tool_calls"])
                 output_tokens = int(len(output_text) / CHARS_PER_TOKEN)
                 
-                logger.info(f"LLM call completed | Status: {response.status_code} | Tokens: {input_tokens} in, {output_tokens} out | Time: {response_time:.2f}s")
+                # Calculate throughput
+                input_tokens_per_sec = round(input_tokens / response_time, 1) if response_time > 0 else 0
+                output_tokens_per_sec = round(output_tokens / response_time, 1) if response_time > 0 else 0
+                
+                logger.info(f"LLM call completed | Status: {response.status_code} | Tokens: {input_tokens} in, {output_tokens} out | Time: {response_time:.2f}s | Throughput: {input_tokens_per_sec} in/s, {output_tokens_per_sec} out/s")
                 
                 call_entry = {
                     "type": "llm_call",
@@ -258,12 +352,56 @@ class Agent:
                 time.sleep(retry_delay)
                 retry_delay *= 2
 
-    def run(self, question: str, max_iterations: int = 30, verbose: bool = True, iteration_callback=None, stream: bool = False, status_prefix: str = "", exclude_tools: List[str] = None):
+    def run(self, question: str, max_iterations: int = 30, verbose: bool = True, iteration_callback=None, stream: bool = False, status_prefix: str = "", exclude_tools: List[str] = None, image_urls: List[str] = None):
+        # Store the user's question in thread-local storage so tools can access it
+        global _current_query
+        _current_query.value = question
+        
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = MODEL_CONFIG.get("system_prompt", "You are a helpful assistant.")
+        
+        # Modify system prompt if we're using vision
+        if self.supports_vision and image_urls:
+            system_prompt += " You can see and analyze images directly in the conversation."
+        
+        # Build user message content - include images if model supports vision
+        if self.supports_vision and image_urls:
+            # For vision models, format message with image URLs
+            import base64
+            from utils import download_image, image_to_base64
+            
+            logger.info(f"Processing {len(image_urls)} image(s) for vision model...")
+            content_parts = [{"type": "text", "text": question}]
+            for i, img_url in enumerate(image_urls, 1):
+                try:
+                    # Download and convert to base64
+                    img_path = download_image(img_url)
+                    if not img_path:
+                        logger.warning(f"Skipping image {i}: download failed")
+                        continue
+                        
+                    b64_img = image_to_base64(img_path)
+                    logger.info(f"Image {i} encoded: {len(b64_img)} chars of base64")
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64_img}"
+                        }
+                    })
+                    # Clean up temp file
+                    import os
+                    os.remove(img_path)
+                except Exception as e:
+                    logger.warning(f"Failed to process image {img_url}: {e}")
+            
+            logger.info(f"Content parts: {len(content_parts)} (1 text + {len(content_parts)-1} images)")
+            user_content = content_parts
+        else:
+            user_content = question
+        
         messages = [
             {"role": "system", "content": f"{system_prompt} Current date and time: {current_time}"},
-            {"role": "user", "content": question}
+            {"role": "user", "content": user_content}
         ]
 
         active_tools = self.tools
@@ -283,6 +421,10 @@ class Agent:
                 message = result["choices"][0]["message"]
                 content = message.get("content", "") or ""
                 tool_calls = message.get("tool_calls", [])
+                
+                # Filter out literal "None" responses from the model
+                if content and content.strip().lower() == "none":
+                    content = ""
                 
                 if content:
                     full_response += content
@@ -327,15 +469,30 @@ class Agent:
                             })
                             
                             result_content = result_content_str
+                            
+                            # Special handling for deep_research: return result directly
+                            # This tool provides a complete, user-ready answer that shouldn't be modified
+                            if function_name == "deep_research":
+                                if verbose:
+                                    logger.info(f"{current_iter_str} | deep_research completed - returning result directly")
+                                return result_content_str if result_content_str.strip() else "Research completed but no summary available."
                         except Exception as e:
                             logger.error(f"Error in tool {function_name}: {str(e)}")
                             result_content = f"Error executing tool {function_name}: {str(e)}\n{traceback.format_exc()}"
                             
                         messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": result_content})
+                    
+                    # After all tool results, remind the model to answer the user's question
+                    # This helps prevent "None" or empty responses
+                    messages.append({
+                        "role": "system",
+                        "content": "Based on the tool results above, provide your answer to the user's question now. DO NOT output 'None'. Give a substantive response."
+                    })
                 else:
-                    return full_response
+                    # No tool calls - this is the final response
+                    return full_response if full_response.strip() else "I couldn't generate a response."
 
-            return full_response or "Maximum iterations reached."
+            return full_response if full_response.strip() else "Maximum iterations reached without a response."
 
         final_result = process()
         

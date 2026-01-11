@@ -38,6 +38,75 @@ def load_model_config():
 
 MODEL_CONFIG = load_model_config()
 
+def is_localhost(url: str) -> bool:
+    """Check if a URL points to localhost."""
+    return "localhost" in url or "127.0.0.1" in url
+
+def get_model_from_api(base_url: str, api_key: str = None) -> Optional[str]:
+    """
+    Auto-detect model name from a local API server by querying /models endpoint.
+    
+    Args:
+        base_url: API base URL (e.g., http://localhost:8080/v1)
+        api_key: Optional API key for authentication
+        
+    Returns:
+        Model ID/name if found, None otherwise
+    """
+    try:
+        # Normalize URL to models endpoint
+        if "/chat/completions" in base_url:
+            models_url = base_url.replace("/chat/completions", "/models")
+        elif base_url.endswith("/v1"):
+            models_url = f"{base_url}/models"
+        else:
+            models_url = f"{base_url}/v1/models"
+        
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        
+        response = requests.get(models_url, headers=headers, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Handle different response formats
+        models = data.get("data", []) if "data" in data else [data] if isinstance(data, dict) else data
+        
+        if models and len(models) > 0:
+            model = models[0]
+            if isinstance(model, dict):
+                model_id = model.get("id") or model.get("name") or model.get("model")
+                # Strip .gguf extension if present
+                if model_id and model_id.endswith(".gguf"):
+                    model_id = model_id[:-5]
+                return model_id
+            else:
+                return str(model)
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to auto-detect model from API: {e}")
+        return None
+
+def get_model_for_api(base_url: str, api_key: str = None, fallback_model: str = "gpt-3.5-turbo") -> str:
+    """
+    Get appropriate model name for an API endpoint.
+    For localhost, auto-detects from /models. For remote, uses fallback.
+    
+    Args:
+        base_url: API base URL
+        api_key: Optional API key
+        fallback_model: Model to use if not localhost or detection fails
+        
+    Returns:
+        Model name to use
+    """
+    if is_localhost(base_url):
+        detected = get_model_from_api(base_url, api_key)
+        if detected:
+            return detected
+    return fallback_model
+
 def is_image_url(url: str) -> bool:
     """Check if a URL likely points to an image based on common extensions."""
     # Remove query parameters for extension check
@@ -48,7 +117,10 @@ def is_image_url(url: str) -> bool:
 def download_image(url: str) -> str:
     """Download an image from a URL and save it to a temporary file."""
     try:
-        response = requests.get(url, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
         
         import tempfile
