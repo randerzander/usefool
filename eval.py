@@ -152,7 +152,7 @@ async def main():
         log_filename = QUERY_LOGS_DIR / f"eval_qid{qid}_{timestamp}.json"
         
         # Get tracking data from agent
-        tracking = agent.get_tracking()
+        tracking = agent.get_tracking_data()
         
         log_data = {
             "qid": qid,
