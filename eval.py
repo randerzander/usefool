@@ -114,10 +114,12 @@ async def main():
         expected = qa["answer"]
         qid = qa.get("qid", "?")
         
-        # Update status line with running count
-        status = f"Question {idx}/{len(qa_pairs)} | QID: {qid} | {Fore.GREEN}✓ {passed_count}{Style.RESET_ALL} / {Fore.RED}✗ {failed_count}{Style.RESET_ALL}"
-        sys.stdout.write(f"\x1b[2K\r{status}")
-        sys.stdout.flush()
+        # Print question and expected answer before agent runs
+        print(f"\n{'='*60}")
+        print(f"Question {idx}/{len(qa_pairs)} | QID: {qid}")
+        print(f"Q: {question}")
+        print(f"Expected: {expected}")
+        print(f"{'='*60}")
         
         q_start_time = time.time()
         agent_response = agent.run(question, verbose=False)
@@ -132,15 +134,9 @@ async def main():
             failed_count += 1
             result_symbol = f"{Fore.RED}✗{Style.RESET_ALL}"
         
-        # Clear line and print full result
-        sys.stdout.write("\x1b[2K\r")
-        sys.stdout.flush()
-        
-        print(f"\n{'='*60}")
-        print(f"{result_symbol} QID: {qid} | {q_elapsed:.2f}s")
-        print(f"Q: {question}")
+        # Print result
+        print(f"\n{result_symbol} Result | {q_elapsed:.2f}s")
         print(f"A: {agent_response[:200]}{'...' if len(agent_response) > 200 else ''}")
-        print(f"Expected: {expected}")
         if not judgment['passed'] and judgment['judgment']:
             print(f"Reason: {judgment['judgment']}")
         print(f"{'='*60}")
