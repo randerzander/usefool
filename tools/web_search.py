@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Web search tool using SearXNG.
+Web search tool using pysearx.
 """
 
 import logging
 import time
-import requests
 import yaml
+import threading
+import sys
 from pathlib import Path
 from typing import List, Dict
 from .tool_utils import create_tool_spec
@@ -43,55 +44,65 @@ TOOL_SPEC = create_tool_spec(
 
 def web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[Dict[str, str]]:
     """
-    Search using local SearXNG instance and return results.
+    Search using pysearx and return results.
     
     Args:
         query: Search query string
         max_results: Maximum number of results to return
         
     Returns:
-        List of dictionaries containing index, title, url, and description
+        List of dictionaries containing index, title, href (url), and body (description)
     """
     start_time = time.time()
+    
+    # Start manual spinner
+    stop_spinner = threading.Event()
+    
+    def spin():
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        i = 0
+        while not stop_spinner.is_set():
+            frame = frames[i % len(frames)]
+            elapsed = time.time() - start_time
+            
+            # Truncate query for display
+            display_query = query[:50] + "..." if len(query) > 50 else query
+            msg = f"Web Search | {display_query} | {elapsed:.1f}s"
+            
+            # Use stdout with ANSI clear + return to force single line update
+            sys.stdout.write(f"\x1b[2K\r{frame} {msg}")
+            sys.stdout.flush()
+            
+            time.sleep(0.1)
+            i += 1
+    
+    spinner_thread = None
+    if sys.stdout.isatty():
+        spinner_thread = threading.Thread(target=spin)
+        spinner_thread.daemon = True
+        spinner_thread.start()
+    
     try:
-        from bs4 import BeautifulSoup
+        from pysearx import search
         
-        # Make request to SearXNG - disable DuckDuckGo which often returns CAPTCHAs
-        url = f"http://localhost:8081/search?q={query}&disabled_engines=duckduckgo"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
+        # Use pysearx with parallel mode for faster results
+        raw_results = search(query, max_results=max_results, parallel=True)
         
-        logger.debug(f"SearXNG response - Status: {response.status_code}, Content length: {len(response.text)}")
+        logger.debug(f"pysearx response - Results: {len(raw_results)}")
         
-        # Parse HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find all result articles
-        articles = soup.find_all('article', class_='result')
-        
+        # Convert pysearx format to expected format
+        # pysearx returns: title, url, description, engine
+        # we need: index, title, href, body
         results = []
-        for i, article in enumerate(articles[:max_results], 1):
-            # Extract title
-            h3 = article.find('h3')
-            title_link = h3.find('a') if h3 else None
-            title = title_link.get_text(strip=True) if title_link else 'N/A'
-            
-            # Extract URL
-            url_link = article.find('a', class_='url_header')
-            url = url_link.get('href') if url_link else 'N/A'
-            
-            # Extract description/body
-            body_div = article.find('p', class_='content')
-            body = body_div.get_text(strip=True) if body_div else ''
-            
+        for i, result in enumerate(raw_results, 1):
             results.append({
                 'index': i,
-                'title': title,
-                'href': url,
-                'body': body
+                'title': result.get('title', 'N/A'),
+                'href': result.get('url', 'N/A'),
+                'body': result.get('description', '')
             })
         
-        # Check for rate limiting or no results
+        # Check for no results
         if len(results) == 0:
             logger.warning(f"⚠️ WARNING: Web search returned 0 results for query '{query}'. This might indicate rate limiting or service issues.")
             return [{
@@ -100,14 +111,19 @@ def web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[Dict[
         
         return results
         
-    except requests.exceptions.Timeout:
-        logger.error("SearXNG request timed out")
-        return [{'error': 'Search request timed out. The search service may be unavailable.'}]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error connecting to SearXNG: {str(e)}")
-        return [{'error': f'Error connecting to search service: {str(e)}'}]
     except Exception as e:
-        logger.error(f"Unexpected error in web_search: {str(e)}")
+        logger.error(f"Error in web_search: {str(e)}")
         import traceback
         traceback.print_exc()
-        return [{'error': f'Unexpected error during search: {str(e)}'}]
+        return [{'error': f'Error during search: {str(e)}'}]
+    finally:
+        if spinner_thread:
+            stop_spinner.set()
+            spinner_thread.join()
+            # Clear the line
+            sys.stdout.write("\x1b[2K\r")
+            sys.stdout.flush()
+        
+        # Log final result
+        duration = time.time() - start_time
+        logger.info(f"Web search completed | Query: '{query[:50]}{'...' if len(query) > 50 else ''}' | Results: {len(results) if 'results' in locals() else 0} | Time: {duration:.2f}s")

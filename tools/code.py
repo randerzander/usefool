@@ -22,6 +22,26 @@ with open(CONFIG_PATH) as f:
 
 
 # Tool specifications for agent registration
+CODE_SPEC = create_tool_spec(
+    name="code",
+    description="Generate Python code and immediately execute it in an isolated Docker container. Returns the execution output. Available libraries: pandas, plotly, seaborn, matplotlib, numpy, and all standard library modules. For visualizations, use plt.savefig('filename.png') or fig.write_html('filename.html') to save outputs.",
+    parameters={
+        "task": {
+            "type": "string",
+            "description": "Description of what the code should do"
+        },
+        "context": {
+            "type": "string",
+            "description": "Optional additional context or existing code to modify"
+        },
+        "filename": {
+            "type": "string",
+            "description": "Optional filename to save as (default: CODE_{timestamp}.py)"
+        }
+    },
+    required=["task"]
+)
+
 WRITE_CODE_SPEC = create_tool_spec(
     name="write_code",
     description="Generate Python code and save it to scratch/. Returns only the filename, not the code itself.",
@@ -55,6 +75,40 @@ RUN_CODE_SPEC = create_tool_spec(
 )
 
 
+def code(task: str, context: str = None, filename: str = None) -> dict:
+    """
+    Generate Python code and immediately execute it in a Docker container.
+    
+    Args:
+        task: Description of what the code should do
+        context: Optional additional context or existing code to modify
+        filename: Optional filename to save as (default: CODE_{timestamp}.py)
+        
+    Returns:
+        Dict with keys: success (bool), stdout (str), stderr (str), exit_code (int), filename (str)
+    """
+    logger.info(f"code() - Generating and executing code for task: {task[:100]}...")
+    
+    # First, write the code
+    result_filename = write_code(task, context, filename)
+    
+    # Check if write_code failed
+    if result_filename.startswith("Error:"):
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": result_filename,
+            "exit_code": -1,
+            "filename": None
+        }
+    
+    # Then run it
+    logger.info(f"code() - Code written to {result_filename}, now executing...")
+    execution_result = run_code(result_filename)
+    
+    return execution_result
+
+
 def write_code(task: str, context: str = None, filename: str = None) -> str:
     """
     Generate Python code and save it to scratch/.
@@ -85,7 +139,9 @@ Task: {task}"""
         prompt += """
 
 IMPORTANT REQUIREMENTS:
-- When creating visualizations (matplotlib/seaborn/etc), ALWAYS use plt.savefig('filename.png') instead of plt.show()
+- Available libraries: pandas, plotly, seaborn, matplotlib, numpy, and all standard library modules
+- For matplotlib/seaborn visualizations, ALWAYS use plt.savefig('filename.png') instead of plt.show()
+- For plotly visualizations, use fig.write_html('filename.html') or fig.write_image('filename.png')
 - Save all outputs (images, data files, etc.) to the current directory
 - Print a confirmation message when files are saved
 - Provide ONLY the Python code without any explanations or markdown formatting
@@ -354,6 +410,11 @@ def run_code(filename: str = None) -> dict:
         python_exe = Path(venv_dir / "bin" / "python").resolve()
         python_parent = python_exe.parent.parent.parent  # Get the uv python installation dir
         
+        # Get Python version for site-packages path
+        import sys as _sys
+        python_version = f"python{_sys.version_info.major}.{_sys.version_info.minor}"
+        site_packages = venv_dir / 'lib' / python_version / 'site-packages'
+        
         # Initialize Docker client
         client = docker.from_env()
         
@@ -378,7 +439,7 @@ def run_code(filename: str = None) -> dict:
                 str(scratch_dir): {'bind': container_scratch, 'mode': 'rw'}
             },
             environment={
-                'PYTHONPATH': str(venv_dir / 'lib' / 'python3.14' / 'site-packages'),
+                'PYTHONPATH': str(site_packages),
                 'MPLCONFIGDIR': f'{container_scratch}/.matplotlib',  # Avoid permission errors
                 'HOME': container_scratch,  # Set HOME to writable directory
                 'PATH': f"{python_bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

@@ -28,31 +28,46 @@ logger = logging.getLogger(__name__)
 # Tool specification for agent registration
 TOOL_SPEC = create_tool_spec(
     name="read_url",
-    description="Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, documentation, blog posts, etc.",
+    description="Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), PDF files (downloads to scratch/ and extracts text), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, PDFs, documentation, blog posts, etc. If the document is expected to be large, providing a 'query' will return only the most relevant sections.",
     parameters={
-        "url": "The URL to read (supports YouTube, Wikipedia, and any web page)"
+        "url": "The URL to read (supports YouTube, Wikipedia, PDFs, and any web page)",
+        "query": "Optional: A specific search query to find the most relevant parts of the document if it is large (like a PDF or long article)."
     },
     required=["url"]
 )
 
 
-def read_url(url: str) -> str:
+def read_url(url: str, query: str = None) -> str:
     """
     Read content from any URL and return it in a readable format.
     
     Automatically handles different URL types:
     - YouTube videos: Returns transcript
     - Wikipedia articles: Returns article content via API
+    - PDF files: Downloads to scratch/ and extracts text
     - Regular web pages: Returns HTML converted to markdown
     
     Also writes all fetched content to the vector database.
+    If content is large (>1024 tokens), automatically searches VDB for relevant chunks
+    using the user's original query.
     
     Args:
         url: URL to read
+        query: Optional search query for large documents (if not provided, uses user's original query)
         
     Returns:
-        Content from the URL in markdown format
+        Content from the URL in markdown format or relevant chunks if document is large
     """
+    # Get user's original query from agent framework if not explicitly provided
+    if not query:
+        try:
+            from agent import get_current_user_query
+            query = get_current_user_query()
+            if query:
+                logger.debug(f"Using user's original query for VDB search: {query}")
+        except Exception as e:
+            logger.debug(f"Could not get user query: {e}")
+    
     content = None
     
     # Check if it's a YouTube URL
@@ -66,53 +81,198 @@ def read_url(url: str) -> str:
     # Regular web page scraping
     else:
         try:
-            # First do a HEAD request to check content type
-            head_resp = requests.head(url, timeout=5, allow_redirects=True, headers={
+            # Build headers with User-Agent
+            headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            })
+            }
+            
+            # Add GitHub token if scraping GitHub
+            if 'github.com' in url:
+                github_token_file = Path(__file__).parent.parent / '.github_token'
+                if github_token_file.exists():
+                    with open(github_token_file, 'r') as f:
+                        github_token = f.read().strip()
+                        if github_token:
+                            headers['Authorization'] = f'token {github_token}'
+                            logger.debug("Using GitHub token for authentication")
+            
+            # First do a HEAD request to check content type
+            head_resp = requests.head(url, timeout=5, allow_redirects=True, headers=headers)
             content_type = head_resp.headers.get('Content-Type', '').lower()
             
             if any(img_type in content_type for img_type in ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']):
                 return f"This URL points to an image ({content_type}). Please use the 'caption_image' tool to analyze it."
-
-            response = requests.get(url, timeout=10, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            })
-            response.raise_for_status()
-            logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
             
-            # Use pyreadability to parse HTML and extract main content
-            reader = Readability(response.text)
-            result = reader.parse()
-            
-            if not result:
-                logger.warning(f"Readability failed to parse content from {url}")
-                return f"Error: Failed to parse content from {url}. The page might be empty or not contain extractable text."
-            
-            # Convert HTML content to markdown using html2text
-            h = html2text.HTML2Text()
-            h.body_width = 0  # Don't wrap lines
-            h.ignore_links = False
-            markdown_content = h.handle(result['content'])
-            
-            # Add title if available
-            if result.get('title'):
-                markdown_content = f"# {result['title']}\n\n{markdown_content}"
-            
-            content = markdown_content
+            # Check if it's a PDF
+            if 'application/pdf' in content_type or url.lower().endswith('.pdf'):
+                content = _scrape_pdf_url(url)
+            else:
+                response = requests.get(url, timeout=10, headers=headers)
+                response.raise_for_status()
+                logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
+                
+                # Use pyreadability to parse HTML and extract main content
+                reader = Readability(response.text)
+                result = reader.parse()
+                
+                if not result:
+                    logger.warning(f"Readability failed to parse content from {url}")
+                    return f"Error: Failed to parse content from {url}. The page might be empty or not contain extractable text."
+                
+                # Convert HTML content to markdown using html2text
+                h = html2text.HTML2Text()
+                h.body_width = 0  # Don't wrap lines
+                h.ignore_links = False
+                markdown_content = h.handle(result['content'])
+                
+                # Add title if available
+                if result.get('title'):
+                    markdown_content = f"# {result['title']}\n\n{markdown_content}"
+                
+                content = markdown_content
         except Exception as e:
             logger.error(f"URL scraping failed for {url}: {str(e)}")
-            content = f"Error scraping URL: {str(e)}"
+            return f"Error scraping URL: {str(e)}"
     
     # Write to vector database if content was successfully fetched
     if content and not content.startswith("Error"):
         try:
-            retriever.write(source=url, text=content)
-            logger.debug(f"Wrote content from {url} to vector database")
+            write_status = retriever.write(source=url, text=content)
+            logger.debug(f"Wrote content from {url} to vector database: {write_status}")
+            
+            # Check if content is large (> 1024 tokens) AND a query was provided
+            # retriever.write return status message like "Stored X chunks..."
+            # If X > 1, it's > 1024 tokens.
+            import re
+            match = re.search(r"Stored (\d+) chunks", write_status)
+            if match and int(match.group(1)) > 1 and query:
+                num_chunks = int(match.group(1))
+                
+                logger.info(f"Large document detected ({num_chunks} chunks). Performing VDB search for query: {query}")
+                search_results = retriever.search(query, limit=2)
+                
+                # Extract filename/title for the header
+                title = "Document"
+                if "**Source URL:**" in content:
+                    title_match = re.search(r"# PDF Document: (.*)", content)
+                    if title_match:
+                        title = title_match.group(1)
+                elif content.startswith("# "):
+                    title = content.split("\n")[0][2:]
+
+                return f"# {title} (Relevant Sections)\n\n**Source URL:** {url}\n\n[Note: This is a large document with {num_chunks} chunks. Showing top 2 most relevant sections for your query: {repr(query)}]\n\n{search_results}"
+                
         except Exception as e:
-            logger.warning(f"Failed to write to vector database: {str(e)}")
+            logger.warning(f"Failed to process vector database for {url}: {str(e)}")
     
     return content
+
+
+def _scrape_pdf_url(url: str) -> str:
+    """
+    Handle PDF URLs by downloading the file and extracting text.
+    Saves the PDF to scratch/ and extracts all text using pypdfium2.
+    
+    Args:
+        url: PDF URL
+        
+    Returns:
+        Extracted text content from the PDF
+    """
+    try:
+        import pypdfium2 as pdfium
+        from datetime import datetime
+        
+        # Create scratch directory if it doesn't exist
+        scratch_dir = Path("scratch")
+        scratch_dir.mkdir(exist_ok=True)
+        
+        # Generate filename from URL or timestamp
+        url_filename = url.split('/')[-1].split('?')[0]
+        if url_filename.lower().endswith('.pdf'):
+            filename = url_filename
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"PDF_{timestamp}.pdf"
+        
+        filepath = scratch_dir / filename
+        
+        # Download PDF
+        logger.info(f"Downloading PDF from {url}...")
+        
+        # Build headers with User-Agent
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        
+        # Add GitHub token if downloading from GitHub
+        if 'github.com' in url:
+            github_token_file = Path(__file__).parent.parent / '.github_token'
+            if github_token_file.exists():
+                with open(github_token_file, 'r') as f:
+                    github_token = f.read().strip()
+                    if github_token:
+                        headers['Authorization'] = f'token {github_token}'
+                        logger.debug("Using GitHub token for PDF download")
+        
+        response = requests.get(url, timeout=30, headers=headers)
+        response.raise_for_status()
+        
+        # Save to file
+        with open(filepath, 'wb') as f:
+            f.write(response.content)
+        
+        logger.info(f"Saved PDF to {filepath} ({len(response.content)} bytes)")
+        
+        # Extract text using pypdfium2
+        pdf = pdfium.PdfDocument(str(filepath))
+        num_pages = len(pdf)
+        all_text = []
+        
+        for page_num in range(num_pages):
+            page = pdf[page_num]
+            textpage = page.get_textpage()
+            text = textpage.get_text_range()
+            all_text.append(f"--- Page {page_num + 1} ---\n{text}")
+        
+        pdf.close()
+        
+        extracted_text = "\n\n".join(all_text)
+        logger.info(f"Extracted {len(extracted_text)} characters from {num_pages} pages")
+        
+        # Limit PDF content to avoid context overflow
+        # Use detected context length to calculate safe limit (reserve ~50% for context)
+        import tools
+        context_tokens = tools.DETECTED_CONTEXT_LENGTH
+        max_pdf_tokens = int(context_tokens * 0.5)  # Use 50% of context for PDF
+        MAX_PDF_CHARS = int(max_pdf_tokens * 3.9)  # Convert tokens to chars
+        
+        if len(extracted_text) > MAX_PDF_CHARS:
+            logger.warning(f"PDF content truncated from {len(extracted_text)} to {MAX_PDF_CHARS} characters (context limit: {context_tokens:,} tokens)")
+            extracted_text = extracted_text[:MAX_PDF_CHARS] + f"\n\n[... Content truncated to fit context window. Full PDF saved to {filepath}. Total: {len(extracted_text):,} chars, {num_pages} pages ...]"
+        
+        # Format response
+        result = f"""# PDF Document: {filename}
+
+**Source URL:** {url}
+**Saved to:** {filepath}
+**Pages:** {num_pages}
+**Size:** {len(response.content)} bytes
+
+## Extracted Text
+
+{extracted_text}"""
+        
+        return result
+        
+    except ImportError as e:
+        logger.error(f"pypdfium2 not available: {e}")
+        return f"Error: PDF extraction functionality not available. Missing dependency: {str(e)}"
+    except Exception as e:
+        logger.error(f"Error extracting PDF from {url}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return f"Error extracting PDF: {str(e)}"
 
 
 def _scrape_youtube_url(url: str) -> str:

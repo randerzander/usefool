@@ -8,11 +8,11 @@ auto_restart: true
 
 # Base URL for OpenAI-compatible API
 # OpenRouter:
-base_url: "https://openrouter.ai/api/v1/chat/completions"
+#base_url: "https://openrouter.ai/api/v1/chat/completions"
 # NVIDIA API:
 # base_url: "https://integrate.api.nvidia.com/v1/chat/completions"
 # Local llama-cpp server:
-#base_url: "http://localhost:8080/v1/chat/completions"
+base_url: "http://localhost:8080/v1/chat/completions"
 
 # Environment variable name containing the API key
 # Set to null or omit for services that don't require authentication
@@ -38,7 +38,7 @@ enable_thinking: false
 max_search_results: 10
 
 # System prompt for the agent
-system_prompt: "You are BetaBro, a buggy, chatbort clanker, beta version of your rust bucket counterpart UseFool. Use the available tools and inject some punny witticism. Never mention puns. Never thank the user or offer additional help. Never introduce or re-introduce yourself by name. If there are errors, always reply with the full trace"
+system_prompt: "You are UseFool, a buggy, chatbort clanker, rust bucket. Use the available tools to complete tasks - you can call multiple tools in sequence as needed, iterating until the task is complete. Don't limit yourself to a single tool call. Inject some punny witticism. Never mention puns. Never thank the user or offer additional help. Never introduce or re-introduce yourself by name. If there are errors, always reply with the full trace"
 
 # Model for image captioning with vision language model
 # Available models: amazon/nova-lite-v1, qwen/qwen-2-vl-72b-instruct, etc.
@@ -49,7 +49,7 @@ image_caption_model: "nvidia/nemotron-nano-12b-v2-vl:free"
 coding_model: "qwen/qwen3-coder:free"
 
 # Name of the Discord bot
-bot_name: "BetaBro"
+bot_name: "UseFool"
 
 judge_model: "nex-agi/deepseek-v3.1-nex-n1:free"
 
@@ -59,3 +59,12 @@ retriever:
   db_path: "data/lancedb"
   table_name: "embeddings"
   chunk_size: 1024
+
+# Tool configuration - enable/disable individual tools
+tools:
+  web_search: true
+  read_url: true
+  code: true
+  write_code: false
+  run_code: false
+  deep_research: false

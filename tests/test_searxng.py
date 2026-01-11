@@ -1,69 +1,46 @@
 #!/usr/bin/env python3
 """
-Test script for SearXNG web_search function
-Tests searching for current president of the US using local SearXNG instance
+Test script for pysearx web_search function
+Tests searching for current president of the US using pysearx
 """
 
 import sys
 import json
-import requests
-from bs4 import BeautifulSoup
 
 def web_search(query: str, max_results: int = 10):
     """
-    Search using local SearXNG instance and return results.
+    Search using pysearx and return results.
     
     Args:
         query: Search query string
         max_results: Maximum number of results to return
         
     Returns:
-        List of dictionaries containing index, title, url, and description
+        List of dictionaries containing index, title, href (url), and body (description)
     """
-    print(f"Searching SearXNG for: '{query}'")
+    print(f"Searching with pysearx for: '{query}'")
     print(f"Max results: {max_results}")
     print("-" * 60)
     
     try:
-        # Make request to SearXNG
-        url = f"http://localhost:8081/search?q={query}"
-        print(f"Fetching: {url}")
+        from pysearx import search
         
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
+        # Use pysearx with parallel mode for faster results
+        print(f"Using pysearx search with parallel=True")
+        raw_results = search(query, max_results=max_results, parallel=True)
         
-        print(f"Response status: {response.status_code}")
-        print(f"Content length: {len(response.text)} characters")
+        print(f"pysearx returned {len(raw_results)} results")
         print("-" * 60)
         
-        # Parse HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find all result articles
-        articles = soup.find_all('article', class_='result')
-        print(f"Found {len(articles)} article elements")
-        print("-" * 60)
-        
+        # Convert pysearx format to expected format
         results = []
-        for i, article in enumerate(articles[:max_results], 1):
-            # Extract title
-            h3 = article.find('h3')
-            title_link = h3.find('a') if h3 else None
-            title = title_link.get_text(strip=True) if title_link else 'N/A'
-            
-            # Extract URL
-            url_link = article.find('a', class_='url_header')
-            url = url_link.get('href') if url_link else 'N/A'
-            
-            # Extract description
-            content_p = article.find('p', class_='content')
-            description = content_p.get_text(strip=True) if content_p else 'N/A'
-            
+        for i, result in enumerate(raw_results, 1):
             results.append({
                 'index': i,
-                'title': title,
-                'href': url,
-                'body': description
+                'title': result.get('title', 'N/A'),
+                'href': result.get('url', 'N/A'),
+                'body': result.get('description', ''),
+                'engine': result.get('engine', 'N/A')
             })
         
         print(f"\n✅ Search completed successfully!")
@@ -79,6 +56,7 @@ def web_search(query: str, max_results: int = 10):
             print(f"\n--- Result {result['index']} ---")
             print(f"Title: {result['title']}")
             print(f"URL: {result['href']}")
+            print(f"Engine: {result['engine']}")
             print(f"Description: {result['body'][:200]}...")
             print()
         
@@ -88,14 +66,6 @@ def web_search(query: str, max_results: int = 10):
         print(json.dumps(results, indent=2))
         
         return results
-        
-    except requests.exceptions.ConnectionError as e:
-        print(f"\n❌ Connection Error!")
-        print(f"Cannot connect to SearXNG at http://localhost:8081")
-        print(f"Error: {str(e)}")
-        print("\nMake sure SearXNG is running:")
-        print("  ./start_searxng.sh")
-        return [{"error": f"Connection failed: {str(e)}"}]
         
     except Exception as e:
         print(f"\n❌ Search failed!")
@@ -111,7 +81,7 @@ def main():
     query = "current president of the United States"
     
     print("=" * 60)
-    print("SearXNG Web Search Test")
+    print("pysearx Web Search Test")
     print("=" * 60)
     print()
     

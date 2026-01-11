@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 # Tool specification
 RESEARCH_TOOL_SPEC = create_tool_spec(
     name="deep_research",
-    description="Perform deep research on a complex topic. Returns a TL;DR and the report link.",
+    description="Perform COMPREHENSIVE deep research on a complex topic. This tool handles ALL research - you don't need to do anything else. Returns a complete summary with report link that is ready to show the user immediately. After calling this tool, return its result directly as your final answer - DO NOT make additional tool calls or try to search for more information.",
     parameters={"query": "The complex research topic or question"},
     required=["query"]
 )

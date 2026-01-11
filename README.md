@@ -59,11 +59,22 @@ print(answer)
 
 ## Available Tools
 
-- `web_search(query)` - Search the web via SearXNG
-- `read_url(url)` - Read and extract content from URLs (YouTube, Wikipedia, web pages)
+- `web_search(query)` - Search the web via pysearx (uses Brave, Google, Bing, DuckDuckGo, Startpage)
+- `read_url(url)` - Read and extract content from URLs (YouTube, Wikipedia, PDFs, web pages)
+  - Supports GitHub authentication (create `.github_token` file to avoid rate limits)
+- `code(task)` - Generate Python code and immediately execute it in an isolated Docker container
 - `read_file(filepath)` - Read files from current directory (1MB limit, path traversal protected)
 - `add_userinfo(username, info)` - Store user information for future reference
 - `read_userinfo(username)` - Recall stored user information (case-insensitive)
+
+## Optional Configuration
+
+### GitHub Token (for scraping GitHub URLs)
+Create a `.github_token` file in the project root with your [GitHub Personal Access Token](https://github.com/settings/tokens):
+```bash
+echo "ghp_yourTokenHere" > .github_token
+```
+This prevents rate limiting when scraping GitHub repositories.
 
 ## Requirements
 
