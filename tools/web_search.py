@@ -8,6 +8,8 @@ import time
 import yaml
 import threading
 import sys
+import asyncio
+import concurrent.futures
 from pathlib import Path
 from typing import List, Dict
 from .tool_utils import create_tool_spec
@@ -24,6 +26,16 @@ except Exception:
     CONFIG = {}
 
 DEFAULT_MAX_RESULTS = CONFIG.get("max_search_results", 10)
+
+
+def _run_pysearx_search(query: str, max_results: int) -> List[Dict]:
+    """
+    Run pysearx search in a way that's safe for both sync and async contexts.
+    This isolates the threading done by pysearx from the caller's context.
+    """
+    from pysearx import search
+    # Use parallel=True here since we're already isolated in an executor
+    return search(query, max_results=max_results, parallel=True)
 
 
 # Tool specification for agent registration
@@ -83,11 +95,11 @@ def web_search(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[Dict[
         spinner_thread.start()
     
     try:
-        from pysearx import search
-        
-        # Use pysearx in sequential mode to avoid threading conflicts with Discord
-        # parallel=False is safer in async environments like Discord bot
-        raw_results = search(query, max_results=max_results, parallel=False)
+        # Run pysearx in a ThreadPoolExecutor to isolate its threading from async contexts
+        # This prevents "cannot switch to a different thread" errors in Discord
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_pysearx_search, query, max_results)
+            raw_results = future.result(timeout=30)  # 30 second timeout
         
         logger.debug(f"pysearx response - Results: {len(raw_results)}")
         
