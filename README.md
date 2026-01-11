@@ -76,6 +76,13 @@ echo "ghp_yourTokenHere" > .github_token
 ```
 This prevents rate limiting when scraping GitHub repositories.
 
+### Proxy Whitelist (for improved web search)
+Set the `PROXY_FILE` environment variable to point to a proxy whitelist file for pysearx:
+```bash
+export PROXY_FILE=whitelist_2026-01-11_15.txt
+```
+Or add it to your `.env` file. This improves search reliability by rotating through validated proxies.
+
 ## Requirements
 
 - Python 3.8+

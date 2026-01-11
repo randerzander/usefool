@@ -24,3 +24,4 @@ data/lancedb/
 channel_logs/
 config/
 user_info/
+whitelist_*.txt
