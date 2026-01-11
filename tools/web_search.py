@@ -34,17 +34,20 @@ def _run_pysearx_search(query: str, max_results: int) -> List[Dict]:
     This isolates the threading done by pysearx from the caller's context.
     
     Only uses engines that don't have playwright/greenlet conflicts:
+    - DuckDuckGoAPIEngine: Fast API-based search (no browser needed)
     - BraveEngine: Fast, reliable API-based search
     - MojeekEngine: Privacy-focused, HTML scraping
     - YahooEngine: Good quality results
     """
     from pysearx import search
+    from pysearx.engines.duckduckgo_api import DuckDuckGoAPIEngine
     from pysearx.engines.brave import BraveEngine
     from pysearx.engines.mojeek import MojeekEngine
     from pysearx.engines.yahoo import YahooEngine
     
     # Use only engines that don't have playwright/greenlet issues
     safe_engines = [
+        DuckDuckGoAPIEngine(),
         BraveEngine(),
         MojeekEngine(),
         YahooEngine(),
