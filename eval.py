@@ -3,6 +3,7 @@ import asyncio
 import time
 import os
 import yaml
+import sys
 from openai import OpenAI
 from pathlib import Path
 from agent import Agent
@@ -25,12 +26,20 @@ def judge_answer(question: str, expected_answer: str, agent_response: str) -> di
     if base_url.endswith("/chat/completions"):
         base_url = base_url.replace("/chat/completions", "")
     
-    model = CONFIG.get("default_model", "gpt-3.5-turbo")
-    
     client = OpenAI(
         api_key=api_key,
         base_url=base_url
     )
+    
+    # Auto-detect model from localhost or use configured model
+    if "localhost" in base_url or "127.0.0.1" in base_url:
+        try:
+            models = client.models.list()
+            model = models.data[0].id if models.data else CONFIG.get("default_model", "gpt-3.5-turbo")
+        except:
+            model = CONFIG.get("default_model", "gpt-3.5-turbo")
+    else:
+        model = CONFIG.get("default_model", "gpt-3.5-turbo")
     
     judge_prompt = f"""
 EXPECTED: {expected_answer}
@@ -79,7 +88,13 @@ async def main():
     api_key_env = CONFIG.get("api_key_env", "OPENROUTER_API_KEY")
     api_key = os.environ.get(api_key_env, "")
     base_url = CONFIG.get("base_url", "http://localhost:8080/v1")
-    model = CONFIG.get("default_model", "gpt-3.5-turbo")
+    
+    # Pass model=None for localhost to trigger auto-detection in Agent
+    # For remote APIs, get from config
+    if "localhost" in base_url or "127.0.0.1" in base_url:
+        model = None  # Let Agent auto-detect from /v1/models
+    else:
+        model = CONFIG.get("default_model", "gpt-3.5-turbo")
     
     # Don't strip base_url for agent - it expects the full path
     agent = Agent(api_key=api_key, model=model, base_url=base_url)
@@ -100,33 +115,44 @@ async def main():
     print(f"\nRunning evaluation on {len(qa_pairs)} questions with answers...")
     
     results = []
-    for qa in qa_pairs:
+    passed_count = 0
+    failed_count = 0
+    
+    for idx, qa in enumerate(qa_pairs, 1):
         question = qa["question"]
         expected = qa["answer"]
         qid = qa.get("qid", "?")
         
-        print(f"\n{'='*60}")
-        print(f"QID: {qid}")
-        print(f"Question: {question}")
-        print(f"{'='*60}")
+        # Update status line with running count
+        status = f"Question {idx}/{len(qa_pairs)} | QID: {qid} | {Fore.GREEN}✓ {passed_count}{Style.RESET_ALL} / {Fore.RED}✗ {failed_count}{Style.RESET_ALL}"
+        sys.stdout.write(f"\x1b[2K\r{status}")
+        sys.stdout.flush()
         
         q_start_time = time.time()
         agent_response = agent.run(question, verbose=False)
         q_elapsed = time.time() - q_start_time
         
-        print(f"Agent Response: {agent_response}")
-        print(f"\nExpected Answer: {expected}")
-        print(f"Time: {q_elapsed:.2f}s")
-        
         judgment = judge_answer(question, expected, agent_response)
         
-        # Colored output for judgment
         if judgment['passed']:
-            print(f"\n{Fore.GREEN}✓ PASS{Style.RESET_ALL}")
+            passed_count += 1
+            result_symbol = f"{Fore.GREEN}✓{Style.RESET_ALL}"
         else:
-            print(f"\n{Fore.RED}✗ FAIL{Style.RESET_ALL}")
+            failed_count += 1
+            result_symbol = f"{Fore.RED}✗{Style.RESET_ALL}"
         
-        print(f"Reason: {judgment['judgment']}")
+        # Clear line and print full result
+        sys.stdout.write("\x1b[2K\r")
+        sys.stdout.flush()
+        
+        print(f"\n{'='*60}")
+        print(f"{result_symbol} QID: {qid} | {q_elapsed:.2f}s")
+        print(f"Q: {question}")
+        print(f"A: {agent_response[:200]}{'...' if len(agent_response) > 200 else ''}")
+        print(f"Expected: {expected}")
+        if not judgment['passed'] and judgment['judgment']:
+            print(f"Reason: {judgment['judgment']}")
+        print(f"{'='*60}")
         
         results.append({
             "qid": qid,
@@ -140,8 +166,9 @@ async def main():
     
     total_time = time.time() - start_time
     
-    passed_count = sum(r['passed'] for r in results)
-    failed_count = len(results) - passed_count
+    # Clear any remaining status line
+    sys.stdout.write("\x1b[2K\r")
+    sys.stdout.flush()
     
     print(f"\n{'='*60}")
     print(f"SUMMARY: ", end="")
