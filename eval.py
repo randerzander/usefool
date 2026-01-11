@@ -4,6 +4,7 @@ import time
 import os
 import yaml
 import sys
+from datetime import datetime
 from openai import OpenAI
 from pathlib import Path
 from agent import Agent
@@ -14,6 +15,11 @@ from utils import is_localhost, get_model_for_api
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
 with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
+
+# Setup query logs directory
+DATA_DIR = Path(__file__).parent / "data"
+QUERY_LOGS_DIR = DATA_DIR / "query_logs"
+QUERY_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 def judge_answer(question: str, expected_answer: str, agent_response: str) -> dict:
     """Use LLM to judge if the agent's response contains the expected answer."""
@@ -140,6 +146,30 @@ async def main():
         if not judgment['passed'] and judgment['judgment']:
             print(f"Reason: {judgment['judgment']}")
         print(f"{'='*60}")
+        
+        # Log the execution chain to query_logs (like discord_bot does)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = QUERY_LOGS_DIR / f"eval_qid{qid}_{timestamp}.json"
+        
+        # Get tracking data from agent
+        tracking = agent.get_tracking()
+        
+        log_data = {
+            "qid": qid,
+            "username": "eval",
+            "timestamp": datetime.now().isoformat(),
+            "user_query": question,
+            "expected_answer": expected,
+            "final_response": agent_response,
+            "passed": judgment["passed"],
+            "judgment": judgment["judgment"],
+            "execution_time": q_elapsed,
+            "call_sequence": tracking.get("call_sequence", []),
+            "token_stats": tracking.get("token_stats", {})
+        }
+        
+        with open(log_filename, 'w') as f:
+            json.dump(log_data, f, indent=2)
         
         results.append({
             "qid": qid,
