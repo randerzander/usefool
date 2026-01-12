@@ -209,6 +209,19 @@ async def main():
     if len(results) > 0:
         print(f"Average Time per Question: {total_time/len(results):.2f}s")
     print(f"{'='*60}")
+    
+    # Save results to JSONL file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Sanitize model name for filename (remove slashes, etc.)
+    model_safe = agent.model.replace('/', '_').replace('\\', '_').replace('.gguf', '')
+    results_file = Path.cwd() / f"{model_safe}_{timestamp}.jsonl"
+    
+    with open(results_file, 'w') as f:
+        for result in results:
+            f.write(json.dumps(result) + '\n')
+    
+    print(f"\n✅ Results saved to: {results_file.name}")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     asyncio.run(main())
