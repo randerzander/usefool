@@ -144,89 +144,89 @@ async def main():
             expected = qa["answer"]
             qid = qa.get("qid", "?")
         
-        # Print question and expected answer before agent runs
-        print(f"\n{'='*60}")
-        print(f"Question {idx}/{len(qa_pairs)} | QID: {qid}")
-        print(f"Q: {question}")
-        print(f"Expected: {expected}")
-        print(f"{'='*60}")
+            # Print question and expected answer before agent runs
+            print(f"\n{'='*60}")
+            print(f"Question {idx}/{len(qa_pairs)} | QID: {qid}")
+            print(f"Q: {question}")
+            print(f"Expected: {expected}")
+            print(f"{'='*60}")
         
-        q_start_time = time.time()
-        agent_response = agent.run(question, verbose=False)
-        q_elapsed = time.time() - q_start_time
+            q_start_time = time.time()
+            agent_response = agent.run(question, verbose=False)
+            q_elapsed = time.time() - q_start_time
         
-        judgment = judge_answer(question, expected, agent_response)
+            judgment = judge_answer(question, expected, agent_response)
         
-        if judgment['passed']:
-            passed_count += 1
-            result_symbol = f"{Fore.GREEN}✓{Style.RESET_ALL}"
-        else:
-            failed_count += 1
-            result_symbol = f"{Fore.RED}✗{Style.RESET_ALL}"
+            if judgment['passed']:
+                passed_count += 1
+                result_symbol = f"{Fore.GREEN}✓{Style.RESET_ALL}"
+            else:
+                failed_count += 1
+                result_symbol = f"{Fore.RED}✗{Style.RESET_ALL}"
         
-        # Print result
-        print(f"\n{result_symbol} Result | {q_elapsed:.2f}s")
-        print(f"A: {agent_response[:200]}{'...' if len(agent_response) > 200 else ''}")
-        if not judgment['passed'] and judgment['judgment']:
-            print(f"Reason: {judgment['judgment']}")
-        print(f"{'='*60}")
+            # Print result
+            print(f"\n{result_symbol} Result | {q_elapsed:.2f}s")
+            print(f"A: {agent_response[:200]}{'...' if len(agent_response) > 200 else ''}")
+            if not judgment['passed'] and judgment['judgment']:
+                print(f"Reason: {judgment['judgment']}")
+            print(f"{'='*60}")
         
-        # Log the execution chain to query_logs (like discord_bot does)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = QUERY_LOGS_DIR / f"eval_qid{qid}_{timestamp}.json"
+            # Log the execution chain to query_logs (like discord_bot does)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = QUERY_LOGS_DIR / f"eval_qid{qid}_{timestamp}.json"
         
-        # Get tracking data from agent
-        tracking = agent.get_tracking_data()
+            # Get tracking data from agent
+            tracking = agent.get_tracking_data()
         
-        log_data = {
-            "qid": qid,
-            "username": "eval",
-            "timestamp": datetime.now().isoformat(),
-            "user_query": question,
-            "expected_answer": expected,
-            "final_response": agent_response,
-            "passed": judgment["passed"],
-            "judgment": judgment["judgment"],
-            "execution_time": q_elapsed,
-            "call_sequence": tracking.get("call_sequence", []),
-            "token_stats": tracking.get("token_stats", {})
-        }
+            log_data = {
+                "qid": qid,
+                "username": "eval",
+                "timestamp": datetime.now().isoformat(),
+                "user_query": question,
+                "expected_answer": expected,
+                "final_response": agent_response,
+                "passed": judgment["passed"],
+                "judgment": judgment["judgment"],
+                "execution_time": q_elapsed,
+                "call_sequence": tracking.get("call_sequence", []),
+                "token_stats": tracking.get("token_stats", {})
+            }
         
-        with open(log_filename, 'w') as f:
-            json.dump(log_data, f, indent=2)
+            with open(log_filename, 'w') as f:
+                json.dump(log_data, f, indent=2)
         
-        result_entry = {
-            "qid": qid,
-            "question": question,
-            "expected": expected,
-            "response": agent_response,
-            "passed": judgment["passed"],
-            "judgment": judgment["judgment"],
-            "time": q_elapsed,
-            "iteration": iteration + 1
-        }
+            result_entry = {
+                "qid": qid,
+                "question": question,
+                "expected": expected,
+                "response": agent_response,
+                "passed": judgment["passed"],
+                "judgment": judgment["judgment"],
+                "time": q_elapsed,
+                "iteration": iteration + 1
+            }
         
-        results.append(result_entry)
-        all_iterations_results.append(result_entry)
+            results.append(result_entry)
+            all_iterations_results.append(result_entry)
         
-        # Append to results file immediately
-        with open(results_file, 'a') as f:
-            f.write(json.dumps(result_entry) + '\n')
+            # Append to results file immediately
+            with open(results_file, 'a') as f:
+                f.write(json.dumps(result_entry) + '\n')
         
-        total_time = time.time() - start_time
+            total_time = time.time() - start_time
         
-        # Clear any remaining status line
-        sys.stdout.write("\x1b[2K\r")
-        sys.stdout.flush()
+            # Clear any remaining status line
+            sys.stdout.write("\x1b[2K\r")
+            sys.stdout.flush()
         
-        print(f"\n{'='*60}")
-        print(f"SUMMARY (Iteration {iteration + 1}): ", end="")
+            print(f"\n{'='*60}")
+            print(f"SUMMARY (Iteration {iteration + 1}): ", end="")
         
-        # Colored summary
-        if passed_count > 0:
-            print(f"{Fore.GREEN}{passed_count} passed{Style.RESET_ALL}", end="")
-        else:
-            print(f"{passed_count} passed", end="")
+            # Colored summary
+            if passed_count > 0:
+                print(f"{Fore.GREEN}{passed_count} passed{Style.RESET_ALL}", end="")
+            else:
+                print(f"{passed_count} passed", end="")
         
         print(" / ", end="")
         
