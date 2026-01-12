@@ -86,6 +86,9 @@ async def main():
     overall_start = time.time()
     all_iterations_results = []
     
+    # Create results file upfront and initialize it
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     for iteration in range(args.iterations):
         if args.iterations > 1:
             print(f"\n{'#'*60}")
@@ -105,6 +108,17 @@ async def main():
         
         # Don't strip base_url for agent - it expects the full path
         agent = Agent(api_key=api_key, model=model, base_url=base_url)
+        
+        # Create results file on first iteration
+        if iteration == 0:
+            model_safe = agent.model.replace('/', '_').replace('\\', '_').replace('.gguf', '')
+            if args.iterations > 1:
+                results_file = Path.cwd() / f"{model_safe}_{args.iterations}iterations_{timestamp}.jsonl"
+            else:
+                results_file = Path.cwd() / f"{model_safe}_{timestamp}.jsonl"
+            # Create empty file
+            results_file.touch()
+            print(f"📝 Writing results to: {results_file.name}\n")
         
         with open("data/qa.jsonl", "r") as f:
             qa_pairs = [json.loads(line) for line in f if line.strip()]
@@ -181,15 +195,23 @@ async def main():
         with open(log_filename, 'w') as f:
             json.dump(log_data, f, indent=2)
         
-        results.append({
+        result_entry = {
             "qid": qid,
             "question": question,
             "expected": expected,
             "response": agent_response,
             "passed": judgment["passed"],
             "judgment": judgment["judgment"],
-            "time": q_elapsed
-        })
+            "time": q_elapsed,
+            "iteration": iteration + 1
+        }
+        
+        results.append(result_entry)
+        all_iterations_results.append(result_entry)
+        
+        # Append to results file immediately
+        with open(results_file, 'a') as f:
+            f.write(json.dumps(result_entry) + '\n')
         
         total_time = time.time() - start_time
         
@@ -219,29 +241,9 @@ async def main():
         if len(results) > 0:
             print(f"Average Time per Question: {total_time/len(results):.2f}s")
         print(f"{'='*60}")
-        
-        # Add iteration number to results
-        for result in results:
-            result['iteration'] = iteration + 1
-        
-        all_iterations_results.extend(results)
     
-    # After all iterations, save combined results
+    # After all iterations, show final summary
     overall_time = time.time() - overall_start
-    
-    # Save results to JSONL file
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Sanitize model name for filename (remove slashes, etc.)
-    model_safe = agent.model.replace('/', '_').replace('\\', '_').replace('.gguf', '')
-    
-    if args.iterations > 1:
-        results_file = Path.cwd() / f"{model_safe}_{args.iterations}iterations_{timestamp}.jsonl"
-    else:
-        results_file = Path.cwd() / f"{model_safe}_{timestamp}.jsonl"
-    
-    with open(results_file, 'w') as f:
-        for result in all_iterations_results:
-            f.write(json.dumps(result) + '\n')
     
     print(f"\n{'='*60}")
     if args.iterations > 1:
