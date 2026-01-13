@@ -55,8 +55,15 @@ def _scrape_with_playwright(url: str) -> str:
                 )
                 page = context.new_page()
                 
-                # Navigate to URL with timeout
-                page.goto(url, wait_until='networkidle', timeout=30000)
+                # Navigate to URL - try networkidle first, fall back to load
+                try:
+                    page.goto(url, wait_until='networkidle', timeout=30000)
+                except Exception as e:
+                    if 'Timeout' in str(e):
+                        logger.warning(f"networkidle timeout, trying with 'load' instead...")
+                        page.goto(url, wait_until='load', timeout=15000)
+                    else:
+                        raise
                 
                 # Wait for body to be visible
                 page.wait_for_selector('body', timeout=10000)
@@ -254,7 +261,13 @@ def read_url(url: str, query: str = None) -> str:
                     if result.get('title'):
                         markdown_content = f"# {result['title']}\n\n{markdown_content}"
                     
-                    content = markdown_content
+                    # Check if content is too short (likely JavaScript-rendered page)
+                    # If less than 100 chars of actual content, try Playwright
+                    if len(markdown_content.strip()) < 100:
+                        logger.warning(f"Content too short ({len(markdown_content)} chars), likely JS-rendered. Trying Playwright...")
+                        content = _scrape_with_playwright(url)
+                    else:
+                        content = markdown_content
                     
                 except requests.exceptions.HTTPError as e:
                     # Check if it's a blocking error (403, 429, etc.)
