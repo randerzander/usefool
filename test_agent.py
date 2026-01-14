@@ -12,6 +12,8 @@ import argparse
 import os
 import sys
 import yaml
+import json
+from datetime import datetime
 from pathlib import Path
 from agent import Agent
 from utils import is_localhost
@@ -20,6 +22,11 @@ from utils import is_localhost
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
 with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
+
+# Setup query logs directory
+DATA_DIR = Path(__file__).parent / "data"
+QUERY_LOGS_DIR = DATA_DIR / "query_logs"
+QUERY_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 def main():
     parser = argparse.ArgumentParser(description='Test the agent with a single query')
@@ -87,6 +94,27 @@ def main():
             total_output = sum(stats.get("output_tokens", 0) for stats in token_stats.values())
             print(f"   Tokens: {total_input} in + {total_output} out = {total_input + total_output} total")
         
+        print(f"{'='*60}")
+        
+        # Save execution trace to log file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = QUERY_LOGS_DIR / f"test_{timestamp}.json"
+        
+        log_data = {
+            "username": "test_agent",
+            "timestamp": datetime.now().isoformat(),
+            "user_query": args.query,
+            "final_response": response,
+            "excluded_tools": args.exclude or [],
+            "max_iterations": args.max_iterations,
+            "call_sequence": tracking.get("call_sequence", []),
+            "token_stats": tracking.get("token_stats", {})
+        }
+        
+        with open(log_filename, 'w') as f:
+            json.dump(log_data, f, indent=2)
+        
+        print(f"\n💾 Execution trace saved to: {log_filename.name}")
         print(f"{'='*60}")
         
     except KeyboardInterrupt:
