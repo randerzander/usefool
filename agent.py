@@ -419,12 +419,28 @@ class Agent:
 
                 result = self._call_llm(messages, use_tools=True, tools_override=active_tools)
                 message = result["choices"][0]["message"]
+                
+                # Some models return reasoning_content separately
+                reasoning_content = message.get("reasoning_content", "")
                 content = message.get("content", "") or ""
                 tool_calls = message.get("tool_calls", [])
                 
                 # Filter out literal "None" responses from the model
-                if content and content.strip().lower() == "none":
+                # Check if content is ONLY "None" (case-insensitive, with optional whitespace)
+                if content and content.strip().lower() in ["none", "null", "n/a"]:
+                    logger.warning(f"Model returned '{content.strip()}' - treating as empty response")
                     content = ""
+                
+                # If we have reasoning but no content, that's also a problem
+                if reasoning_content and not content and not tool_calls:
+                    logger.warning(f"Model returned reasoning but no content/tools - prompting for answer")
+                    # Add system message and continue loop
+                    messages.append(message)
+                    messages.append({
+                        "role": "system",
+                        "content": "You provided reasoning but no answer. Please provide your final answer to the user's question now."
+                    })
+                    continue
                 
                 if content:
                     full_response += content
