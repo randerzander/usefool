@@ -114,11 +114,14 @@ class DiscordBot:
 
             try:
                 self._register_channel_history_tool(message.channel, message.id)
-                if image_urls: self._register_image_caption_tool(question)
                 
-                # Automatically caption images to provide context immediately
+                # Only register image caption tool if main model doesn't support vision
+                if image_urls and not self.agent.supports_vision:
+                    self._register_image_caption_tool(question)
+                
+                # Automatically caption images if main model doesn't support vision
                 auto_captions = []
-                if image_urls:
+                if image_urls and not self.agent.supports_vision:
                     logger.info(f"[AUTO-CAPTIONING] Processing {len(image_urls)} image(s)...")
                     from utils import two_round_image_caption
                     for i, url in enumerate(image_urls, 1):
@@ -129,9 +132,14 @@ class DiscordBot:
                         except Exception as ce:
                             logger.warning(f"Auto-captioning failed for image {i}: {ce}")
                 
-                image_context = self._build_image_context(image_urls)
-                if auto_captions:
-                    image_context += "\n" + "\n\n".join(auto_captions) + "\n"
+                # Build context - for vision models, include image URLs directly
+                if self.agent.supports_vision and image_urls:
+                    logger.info(f"[VISION MODEL] Passing {len(image_urls)} image(s) directly to model")
+                    image_context = self._build_vision_context(image_urls)
+                else:
+                    image_context = self._build_image_context(image_urls)
+                    if auto_captions:
+                        image_context += "\n" + "\n\n".join(auto_captions) + "\n"
                 
                 question_with_context = f"[You are a Discord bot named {BOT_NAME}]\n\n{image_context}\n{reply_context}User question: {question}"
                 
@@ -139,13 +147,19 @@ class DiscordBot:
                     if iteration_num > 0: await self._remove_reaction(message, "⏳" if iteration_num % 2 == 1 else "⌛")
                     await self._add_reaction(message, "⌛" if iteration_num % 2 == 1 else "⏳")
                 
+                # Pass image URLs to agent if model supports vision
                 answer = await asyncio.to_thread(
                     self.agent.run, question_with_context, max_iterations=30, verbose=False, 
-                    iteration_callback=lambda n: asyncio.run_coroutine_threadsafe(update_hourglass(n), self.client.loop)
+                    iteration_callback=lambda n: asyncio.run_coroutine_threadsafe(update_hourglass(n), self.client.loop),
+                    image_urls=image_urls if self.agent.supports_vision else None
                 )
                 
                 self._unregister_channel_history_tool()
-                self._unregister_image_caption_tool()
+                if image_urls and not self.agent.supports_vision:
+                    self._unregister_image_caption_tool()
+                
+                # Agent always returns a string (never None/empty) with fallback messages
+                # So no need to check for empty responses here
                 
                 if len(answer) >= 1500:
                     condensed = await self._condense_response(answer)
@@ -208,6 +222,15 @@ class DiscordBot:
         if not image_urls: return ""
         details = "\n".join([f"Image {i} URL: {u}" for i, u in enumerate(image_urls, 1)])
         return f"\n\n[Images attached: {len(image_urls)} image(s)]\n{details}\n\nYou can use the 'caption_image' tool to analyze these images.\n"
+    
+    def _build_vision_context(self, image_urls):
+        """Build context for vision models that will receive images directly."""
+        if not image_urls: return ""
+        # For vision models, we'll pass images directly in the message content
+        # Store the URLs so agent.run() can access them
+        self._current_image_urls = image_urls
+        details = "\n".join([f"Image {i}" for i in range(1, len(image_urls) + 1)])
+        return f"\n\n[Images attached: {len(image_urls)} image(s)]\n{details}\n"
 
     async def _get_reply_chain(self, message):
         chain, urls, curr, depth = [], [], message, 0
@@ -317,6 +340,8 @@ class DiscordBot:
 
     def _register_channel_history_tool(self, channel, msg_id):
         async def read_history(count=10):
+            # Ensure count is an integer
+            count = int(count) if count else 10
             msgs = []
             async for m in channel.history(limit=count+10):
                 if m.id != msg_id and m.author != self.client.user: msgs.append(m)
